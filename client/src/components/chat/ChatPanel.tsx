@@ -3,13 +3,16 @@ import { PanelLeft, PanelRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useChatStore } from '@/stores/chat';
 import { useUIStore } from '@/stores/ui';
+import { usePreviewStore } from '@/stores/preview';
 import { MessageBubble } from './MessageBubble';
 import { ChatInput } from './ChatInput';
 
 export function ChatPanel() {
   const { activeThreadId, messages, threads, streamingText, isStreaming } = useChatStore();
   const { sidebarOpen, toggleSidebar, previewOpen, togglePreview } = useUIStore();
+  const ingestMessage = usePreviewStore((s) => s.ingestMessage);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const lastIngestedIdRef = useRef<string | null>(null);
 
   const currentThread = threads.find((t) => t.id === activeThreadId);
   const currentMessages = activeThreadId ? messages[activeThreadId] || [] : [];
@@ -19,6 +22,18 @@ export function ChatPanel() {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [currentMessages, streamingText]);
+
+  useEffect(() => {
+    const latest = currentMessages[currentMessages.length - 1];
+    if (!latest) return;
+    if (lastIngestedIdRef.current === latest.id) return;
+    lastIngestedIdRef.current = latest.id;
+    ingestMessage(latest);
+  }, [currentMessages, ingestMessage]);
+
+  useEffect(() => {
+    lastIngestedIdRef.current = null;
+  }, [activeThreadId]);
 
   return (
     <div className="h-full flex flex-col bg-background">

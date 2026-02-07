@@ -55,6 +55,8 @@ export interface GitChange {
   diff: string;
 }
 
+export type GitChangeAction = "stage" | "unstage" | "revert";
+
 export interface Skill {
   id: string;
   name: string;
@@ -76,6 +78,40 @@ export interface FileTreeNode {
   children?: FileTreeNode[];
   ext?: string;
 }
+
+export type ArtifactStatus = "ready" | "loading" | "error";
+export type ArtifactViewport = "desktop" | "tablet" | "mobile";
+
+export interface ArtifactItem {
+  id: string;
+  title: string;
+  html: string;
+  status: ArtifactStatus;
+  updatedAt: string;
+}
+
+export interface TerminalLine {
+  id: string;
+  type: "cmd" | "out" | "err" | "info";
+  text: string;
+}
+
+export interface TerminalSession {
+  id: string;
+  name: string;
+  lines: TerminalLine[];
+}
+
+export interface PreviewImageItem {
+  id: string;
+  prompt: string;
+  model: string;
+  size: string;
+  url: string;
+  createdAt: string;
+}
+
+export type PreviewFileSelectionSource = "changes" | "files" | "artifact";
 
 export interface AIModel {
   id: string;

@@ -1,91 +1,115 @@
-import { useState } from 'react';
-import { FileCode, Plus, Minus } from 'lucide-react';
-import { cn } from '@/lib/utils';
-import { mockGitChanges } from '@/mocks/git-changes';
+import { ChevronDown, ChevronRight, MessageSquare } from "lucide-react";
+import { usePreviewStore } from "@/stores/preview";
+import { useUIStore } from "@/stores/ui";
+import { ChangeFileItem } from "./changes/ChangeFileItem";
+import { ChangeHeader } from "./changes/ChangeHeader";
 
 export function CodeChangesTab() {
-  const [expandedFile, setExpandedFile] = useState<string | null>(mockGitChanges[0]?.file || null);
-  const [filter, setFilter] = useState<'all' | 'staged' | 'unstaged'>('all');
+  const {
+    allChanges,
+    changesFilter,
+    collapsedGroups,
+    expandedFiles,
+    selectedFile,
+    setChangesFilter,
+    toggleChangeGroup,
+    toggleFileExpanded,
+    toggleStage,
+    revertChange,
+    selectFile,
+  } = usePreviewStore();
+  const { togglePreview } = useUIStore();
 
-  const filtered = mockGitChanges.filter((c) => {
-    if (filter === 'staged') return c.staged;
-    if (filter === 'unstaged') return !c.staged;
+  const filteredChanges = allChanges.filter((change) => {
+    if (changesFilter === "staged") return change.staged;
+    if (changesFilter === "unstaged") return !change.staged;
     return true;
   });
 
-  return (
-    <div className="p-3 space-y-2">
-      {/* Filter Bar */}
-      <div className="flex items-center gap-1 mb-3">
-        {(['all', 'staged', 'unstaged'] as const).map((f) => (
-          <button
-            key={f}
-            onClick={() => setFilter(f)}
-            className={cn(
-              'px-2.5 py-1 text-[11px] rounded-md capitalize transition-colors',
-              filter === f
-                ? 'bg-muted text-foreground font-medium'
-                : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'
-            )}
-          >
-            {f}
-          </button>
-        ))}
-        <span className="ml-auto text-[11px] text-muted-foreground">
-          {filtered.length} file{filtered.length !== 1 ? 's' : ''}
-        </span>
+  const unstaged = filteredChanges.filter((change) => !change.staged);
+  const staged = filteredChanges.filter((change) => change.staged);
+
+  if (filteredChanges.length === 0) {
+    return (
+      <div className="h-full flex flex-col items-center justify-center text-center px-6">
+        <p className="text-sm font-medium text-foreground">No changes in this view</p>
+        <p className="text-xs text-muted-foreground mt-1">Code changes will appear here after tool actions.</p>
+        <button
+          onClick={togglePreview}
+          className="mt-4 inline-flex items-center gap-2 px-3 py-1.5 text-xs rounded-md bg-muted text-foreground hover:bg-muted/80 transition-colors"
+        >
+          <MessageSquare size={12} />
+          Back to Chat
+        </button>
       </div>
+    );
+  }
 
-      {/* File List */}
-      {filtered.map((change) => (
-        <div key={change.file} className="rounded-lg border border-border overflow-hidden">
-          {/* File Header */}
-          <button
-            onClick={() => setExpandedFile(expandedFile === change.file ? null : change.file)}
-            className="w-full px-3 py-2 flex items-center gap-2 text-xs hover:bg-muted/30 transition-colors"
-          >
-            <FileCode size={13} className={cn(
-              change.status === 'added' ? 'text-green-400' :
-              change.status === 'deleted' ? 'text-red-400' :
-              'text-yellow-400'
-            )} />
-            <span className="font-mono text-foreground truncate flex-1 text-left">{change.file}</span>
-            <div className="flex items-center gap-2 shrink-0">
-              {change.staged && (
-                <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-500/10 text-green-400">staged</span>
-              )}
-              <span className="flex items-center gap-0.5 text-green-400 text-[11px]">
-                <Plus size={10} />{change.additions}
-              </span>
-              <span className="flex items-center gap-0.5 text-red-400 text-[11px]">
-                <Minus size={10} />{change.deletions}
-              </span>
-            </div>
-          </button>
+  return (
+    <div className="p-3 space-y-3">
+      <ChangeHeader filter={changesFilter} count={filteredChanges.length} onFilter={setChangesFilter} />
 
-          {/* Diff View */}
-          {expandedFile === change.file && (
-            <div className="border-t border-border bg-background/50 overflow-x-auto">
-              <pre className="text-[11px] font-mono p-3 leading-5">
-                {change.diff.split('\n').map((line, i) => (
-                  <div
-                    key={i}
-                    className={cn(
-                      'px-2 -mx-2',
-                      line.startsWith('+') && !line.startsWith('+++') ? 'bg-green-500/10 text-green-300' :
-                      line.startsWith('-') && !line.startsWith('---') ? 'bg-red-500/10 text-red-300' :
-                      line.startsWith('@@') ? 'text-blue-400' :
-                      'text-muted-foreground'
-                    )}
-                  >
-                    {line}
-                  </div>
-                ))}
-              </pre>
-            </div>
-          )}
-        </div>
-      ))}
+      <section className="space-y-2">
+        <button
+          onClick={() => toggleChangeGroup("unstaged")}
+          className="w-full flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground"
+        >
+          {collapsedGroups.unstaged ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
+          Unstaged ({unstaged.length})
+        </button>
+        {!collapsedGroups.unstaged && (
+          <div className="space-y-2">
+            {unstaged.map((change) => (
+              <ChangeFileItem
+                key={change.file}
+                change={change}
+                expanded={expandedFiles.includes(change.file)}
+                selected={selectedFile === change.file}
+                onToggleExpand={() => toggleFileExpanded(change.file)}
+                onToggleStage={() => toggleStage(change.file)}
+                onRevert={() => revertChange(change.file)}
+                onSelect={() => selectFile(change.file, "changes")}
+              />
+            ))}
+            {unstaged.length === 0 && (
+              <div className="rounded-md border border-dashed border-border p-3 text-xs text-muted-foreground">
+                No unstaged changes
+              </div>
+            )}
+          </div>
+        )}
+      </section>
+
+      <section className="space-y-2">
+        <button
+          onClick={() => toggleChangeGroup("staged")}
+          className="w-full flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground"
+        >
+          {collapsedGroups.staged ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
+          Staged ({staged.length})
+        </button>
+        {!collapsedGroups.staged && (
+          <div className="space-y-2">
+            {staged.map((change) => (
+              <ChangeFileItem
+                key={change.file}
+                change={change}
+                expanded={expandedFiles.includes(change.file)}
+                selected={selectedFile === change.file}
+                onToggleExpand={() => toggleFileExpanded(change.file)}
+                onToggleStage={() => toggleStage(change.file)}
+                onRevert={() => revertChange(change.file)}
+                onSelect={() => selectFile(change.file, "changes")}
+              />
+            ))}
+            {staged.length === 0 && (
+              <div className="rounded-md border border-dashed border-border p-3 text-xs text-muted-foreground">
+                No staged changes
+              </div>
+            )}
+          </div>
+        )}
+      </section>
     </div>
   );
 }

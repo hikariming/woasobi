@@ -1,34 +1,74 @@
+import { Square, Trash2 } from "lucide-react";
+import { useMemo } from "react";
+import { usePreviewStore } from "@/stores/preview";
+import { TerminalTabs } from "./terminal/TerminalTabs";
+
 export function TerminalTab() {
-  const lines = [
-    { type: 'cmd' as const, text: '$ git status --porcelain' },
-    { type: 'out' as const, text: 'M  src/api/billing.ts' },
-    { type: 'out' as const, text: 'M  src/middleware/auth.ts' },
-    { type: 'out' as const, text: '?? prisma/migrations/20260206005516_add_billing/' },
-    { type: 'cmd' as const, text: '$ npx prisma migrate status' },
-    { type: 'out' as const, text: 'Database schema is up to date!' },
-    { type: 'cmd' as const, text: '$ pnpm dev' },
-    { type: 'out' as const, text: 'VITE v7.2.4  ready in 240 ms' },
-    { type: 'out' as const, text: '' },
-    { type: 'out' as const, text: '  ➜  Local:   http://localhost:3000/' },
-    { type: 'out' as const, text: '  ➜  Network: http://192.168.1.42:3000/' },
-  ];
+  const {
+    terminalSessions,
+    activeTerminalSessionId,
+    terminalRunning,
+    switchTerminalSession,
+    addTerminalSession,
+    closeTerminalSession,
+    clearTerminalSession,
+    stopTerminal,
+  } = usePreviewStore();
+
+  const activeSession = useMemo(
+    () => terminalSessions.find((session) => session.id === activeTerminalSessionId),
+    [terminalSessions, activeTerminalSessionId]
+  );
 
   return (
-    <div className="h-full bg-[oklch(0.13_0_0)] p-3 font-mono text-xs">
-      {lines.map((line, i) => (
-        <div
-          key={i}
-          className={
-            line.type === 'cmd'
-              ? 'text-green-400 mt-2 first:mt-0'
-              : 'text-muted-foreground'
-          }
+    <div className="h-full flex flex-col bg-[oklch(0.13_0_0)]">
+      <TerminalTabs
+        sessions={terminalSessions}
+        activeId={activeTerminalSessionId}
+        onSwitch={switchTerminalSession}
+        onAdd={addTerminalSession}
+        onClose={closeTerminalSession}
+      />
+
+      <div className="px-2 py-1.5 border-b border-border/40 flex items-center justify-end gap-1">
+        <button
+          onClick={() => clearTerminalSession(activeTerminalSessionId)}
+          className="inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] text-muted-foreground hover:text-foreground hover:bg-muted/20 transition-colors"
         >
-          {line.text || '\u00A0'}
-        </div>
-      ))}
-      <div className="mt-2 text-green-400">
-        $ <span className="inline-block w-1.5 h-3.5 bg-green-400/70 animate-pulse align-middle" />
+          <Trash2 size={11} />
+          Clear
+        </button>
+        <button
+          onClick={stopTerminal}
+          className="inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] text-muted-foreground hover:text-red-300 hover:bg-muted/20 transition-colors"
+        >
+          <Square size={11} />
+          Stop
+        </button>
+      </div>
+
+      <div className="flex-1 p-3 font-mono text-xs overflow-y-auto">
+        {(activeSession?.lines || []).map((line) => (
+          <div
+            key={line.id}
+            className={
+              line.type === "cmd"
+                ? "text-green-400 mt-2 first:mt-0"
+                : line.type === "err"
+                  ? "text-red-300"
+                  : line.type === "info"
+                    ? "text-blue-300"
+                    : "text-muted-foreground"
+            }
+          >
+            {line.text || "\u00A0"}
+          </div>
+        ))}
+        {terminalRunning && (
+          <div className="mt-2 text-green-400">
+            $ <span className="inline-block w-1.5 h-3.5 bg-green-400/70 animate-pulse align-middle" />
+          </div>
+        )}
       </div>
     </div>
   );
