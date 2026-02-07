@@ -100,6 +100,8 @@ export interface TerminalSession {
   id: string;
   name: string;
   lines: TerminalLine[];
+  /** Backend shell session ID — if set, this is a real interactive terminal */
+  backendId?: string;
 }
 
 export interface PreviewImageItem {

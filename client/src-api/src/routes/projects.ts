@@ -354,4 +354,75 @@ projects.post('/:id/git/revert', async (c) => {
   }
 });
 
+// POST /:id/git/commit - Commit staged changes
+projects.post('/:id/git/commit', async (c) => {
+  const id = c.req.param('id');
+  const { message } = await c.req.json<{ message: string }>();
+  const projectList = await loadProjects();
+  const project = projectList.find((p) => p.id === id);
+  if (!project) return c.json({ error: 'project not found' }, 404);
+  if (!message?.trim()) return c.json({ error: 'commit message is required' }, 400);
+
+  try {
+    const { stdout } = await execFileAsync('git', ['commit', '-m', message.trim()], {
+      cwd: project.path,
+      maxBuffer: 1024 * 1024,
+    });
+    return c.json({ ok: true, output: stdout.trim() });
+  } catch (error) {
+    const msg = error instanceof Error ? (error as Error & { stderr?: string }).stderr || error.message : String(error);
+    return c.json({ error: msg }, 500);
+  }
+});
+
+// GET /:id/git/branches - List branches + current
+projects.get('/:id/git/branches', async (c) => {
+  const id = c.req.param('id');
+  const projectList = await loadProjects();
+  const project = projectList.find((p) => p.id === id);
+  if (!project) return c.json({ error: 'project not found' }, 404);
+
+  try {
+    const { stdout } = await execFileAsync('git', ['branch', '--no-color'], {
+      cwd: project.path,
+      maxBuffer: 1024 * 1024,
+    });
+
+    let current = 'main';
+    const branches: string[] = [];
+
+    for (const line of stdout.trim().split('\n').filter(Boolean)) {
+      const name = line.replace(/^\*?\s+/, '').trim();
+      if (!name || name.startsWith('(')) continue;
+      branches.push(name);
+      if (line.startsWith('*')) current = name;
+    }
+
+    return c.json({ current, branches });
+  } catch {
+    return c.json({ current: 'main', branches: ['main'] });
+  }
+});
+
+// POST /:id/git/checkout - Switch branch
+projects.post('/:id/git/checkout', async (c) => {
+  const id = c.req.param('id');
+  const { branch } = await c.req.json<{ branch: string }>();
+  const projectList = await loadProjects();
+  const project = projectList.find((p) => p.id === id);
+  if (!project) return c.json({ error: 'project not found' }, 404);
+  if (!branch?.trim()) return c.json({ error: 'branch name is required' }, 400);
+
+  try {
+    await execFileAsync('git', ['checkout', branch.trim()], {
+      cwd: project.path,
+      maxBuffer: 1024 * 1024,
+    });
+    return c.json({ ok: true, branch: branch.trim() });
+  } catch (error) {
+    const msg = error instanceof Error ? (error as Error & { stderr?: string }).stderr || error.message : String(error);
+    return c.json({ error: msg }, 500);
+  }
+});
+
 export default projects;

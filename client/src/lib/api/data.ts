@@ -141,3 +141,66 @@ export async function revertFiles(projectId: string, files: string[]): Promise<v
   });
   if (!res.ok) throw new Error(`Failed to revert: ${res.status}`);
 }
+
+export async function commitChanges(projectId: string, message: string): Promise<{ ok: boolean; output: string }> {
+  const res = await fetch(`${API_BASE_URL}/projects/${projectId}/git/commit`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message }),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || `Failed to commit: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function fetchBranches(projectId: string): Promise<{ current: string; branches: string[] }> {
+  const res = await fetch(`${API_BASE_URL}/projects/${projectId}/git/branches`);
+  if (!res.ok) throw new Error(`Failed to fetch branches: ${res.status}`);
+  return res.json();
+}
+
+export async function checkoutBranch(projectId: string, branch: string): Promise<void> {
+  const res = await fetch(`${API_BASE_URL}/projects/${projectId}/git/checkout`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ branch }),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || `Failed to checkout: ${res.status}`);
+  }
+}
+
+// --- Terminal ---
+
+export async function createTerminalSession(projectId: string): Promise<{ id: string; cwd: string }> {
+  const res = await fetch(`${API_BASE_URL}/terminal/create`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ projectId }),
+  });
+  if (!res.ok) throw new Error(`Failed to create terminal: ${res.status}`);
+  return res.json();
+}
+
+export async function execTerminalCommand(
+  sessionId: string,
+  command: string
+): Promise<{ lines: Array<{ type: 'out' | 'err'; text: string }> }> {
+  const res = await fetch(`${API_BASE_URL}/terminal/${sessionId}/exec`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ command }),
+  });
+  if (!res.ok) throw new Error(`Failed to exec command: ${res.status}`);
+  return res.json();
+}
+
+export async function killTerminalSession(sessionId: string): Promise<void> {
+  const res = await fetch(`${API_BASE_URL}/terminal/${sessionId}/kill`, {
+    method: 'POST',
+  });
+  if (!res.ok) throw new Error(`Failed to kill terminal: ${res.status}`);
+}

@@ -1,5 +1,5 @@
 import { Square, Trash2 } from "lucide-react";
-import { useMemo } from "react";
+import { useMemo, useRef, useEffect, useState } from "react";
 import { usePreviewStore } from "@/stores/preview";
 import { TerminalTabs } from "./terminal/TerminalTabs";
 
@@ -9,16 +9,38 @@ export function TerminalTab() {
     activeTerminalSessionId,
     terminalRunning,
     switchTerminalSession,
-    addTerminalSession,
+    addRealTerminalSession,
     closeTerminalSession,
     clearTerminalSession,
     stopTerminal,
+    execCommand,
   } = usePreviewStore();
+
+  const [commandInput, setCommandInput] = useState("");
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   const activeSession = useMemo(
     () => terminalSessions.find((session) => session.id === activeTerminalSessionId),
     [terminalSessions, activeTerminalSessionId]
   );
+
+  const isInteractive = !!activeSession?.backendId;
+
+  // Auto-scroll to bottom when new lines appear
+  useEffect(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [activeSession?.lines.length]);
+
+  const handleExec = async () => {
+    const cmd = commandInput.trim();
+    if (!cmd || terminalRunning) return;
+    setCommandInput("");
+    await execCommand(cmd);
+    inputRef.current?.focus();
+  };
 
   return (
     <div className="h-full flex flex-col bg-[oklch(0.13_0_0)]">
@@ -26,7 +48,7 @@ export function TerminalTab() {
         sessions={terminalSessions}
         activeId={activeTerminalSessionId}
         onSwitch={switchTerminalSession}
-        onAdd={addTerminalSession}
+        onAdd={addRealTerminalSession}
         onClose={closeTerminalSession}
       />
 
@@ -47,7 +69,7 @@ export function TerminalTab() {
         </button>
       </div>
 
-      <div className="flex-1 p-3 font-mono text-xs overflow-y-auto">
+      <div ref={scrollRef} className="flex-1 p-3 font-mono text-xs overflow-y-auto">
         {(activeSession?.lines || []).map((line) => (
           <div
             key={line.id}
@@ -70,6 +92,24 @@ export function TerminalTab() {
           </div>
         )}
       </div>
+
+      {/* Command input for interactive shells */}
+      {isInteractive && (
+        <div className="border-t border-border/40 px-3 py-2 flex items-center gap-2">
+          <span className="text-green-400 text-xs font-mono">$</span>
+          <input
+            ref={inputRef}
+            value={commandInput}
+            onChange={(e) => setCommandInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") handleExec();
+            }}
+            disabled={terminalRunning}
+            placeholder="Type a command..."
+            className="flex-1 bg-transparent text-xs font-mono text-foreground outline-none placeholder:text-muted-foreground/50"
+          />
+        </div>
+      )}
     </div>
   );
 }

@@ -16,6 +16,12 @@ import {
   stageFiles,
   unstageFiles,
   revertFiles,
+  commitChanges,
+  fetchBranches,
+  checkoutBranch,
+  createTerminalSession,
+  execTerminalCommand,
+  killTerminalSession,
 } from "@/lib/api/data";
 
 type ChangesFilter = "all" | "staged" | "unstaged";
@@ -30,9 +36,16 @@ interface PreviewStore {
   allChanges: GitChange[];
   changesFilter: ChangesFilter;
   changesLoading: boolean;
+  commitMessage: string;
+  commitLoading: boolean;
   collapsedGroups: { staged: boolean; unstaged: boolean };
   expandedFiles: string[];
   selectedFile: string | null;
+
+  // Git branches
+  currentBranch: string;
+  branches: string[];
+  branchesLoading: boolean;
 
   // Artifacts
   artifacts: ArtifactItem[];
@@ -72,6 +85,12 @@ interface PreviewStore {
   revertChange: (path: string) => void;
   selectFile: (path: string, source: PreviewFileSelectionSource) => void;
   loadGitStatus: (projectId: string) => Promise<void>;
+  setCommitMessage: (msg: string) => void;
+  commitStaged: () => Promise<{ ok: boolean; error?: string }>;
+
+  // Branch actions
+  loadBranches: (projectId: string) => Promise<void>;
+  switchBranch: (branch: string) => Promise<{ ok: boolean; error?: string }>;
 
   // Artifact actions
   setArtifactViewport: (mode: ArtifactViewport) => void;
@@ -84,12 +103,15 @@ interface PreviewStore {
   // Terminal actions
   switchTerminalSession: (id: string) => void;
   addTerminalSession: () => void;
+  addRealTerminalSession: () => Promise<void>;
   closeTerminalSession: (id: string) => void;
   appendTerminalLine: (line: Omit<TerminalLine, "id">) => void;
+  appendTerminalLineToSession: (sessionId: string, line: Omit<TerminalLine, "id">) => void;
   clearTerminalSession: (id: string) => void;
   clearActiveTerminal: () => void;
   setTerminalRunning: (running: boolean) => void;
   stopTerminal: () => void;
+  execCommand: (command: string) => Promise<void>;
 
   // Image actions
   selectImage: (id: string) => void;
@@ -118,9 +140,16 @@ export const usePreviewStore = create<PreviewStore>((set, get) => ({
   allChanges: [],
   changesFilter: "all",
   changesLoading: false,
+  commitMessage: "",
+  commitLoading: false,
   collapsedGroups: { staged: false, unstaged: false },
   expandedFiles: [],
   selectedFile: null,
+
+  // Git branches
+  currentBranch: "main",
+  branches: [],
+  branchesLoading: false,
 
   // Artifacts — start empty
   artifacts: [],
@@ -157,6 +186,7 @@ export const usePreviewStore = create<PreviewStore>((set, get) => ({
     if (id && id !== prev) {
       get().loadFiles(id);
       get().loadGitStatus(id);
+      get().loadBranches(id);
     }
   },
 
@@ -222,6 +252,51 @@ export const usePreviewStore = create<PreviewStore>((set, get) => ({
       set({ allChanges: changes, changesLoading: false });
     } catch {
       set({ allChanges: [], changesLoading: false });
+    }
+  },
+  setCommitMessage: (msg) => set({ commitMessage: msg }),
+  commitStaged: async () => {
+    const { activeProjectId, commitMessage } = get();
+    if (!activeProjectId || !commitMessage.trim()) {
+      return { ok: false, error: "No project or empty message" };
+    }
+    set({ commitLoading: true });
+    try {
+      await commitChanges(activeProjectId, commitMessage.trim());
+      set({ commitMessage: "", commitLoading: false });
+      // Refresh git status after commit
+      await get().loadGitStatus(activeProjectId);
+      return { ok: true };
+    } catch (e) {
+      set({ commitLoading: false });
+      return { ok: false, error: e instanceof Error ? e.message : String(e) };
+    }
+  },
+
+  // --- Branches ---
+  loadBranches: async (projectId) => {
+    set({ branchesLoading: true });
+    try {
+      const { current, branches } = await fetchBranches(projectId);
+      set({ currentBranch: current, branches, branchesLoading: false });
+    } catch {
+      set({ branchesLoading: false });
+    }
+  },
+  switchBranch: async (branch) => {
+    const { activeProjectId } = get();
+    if (!activeProjectId) return { ok: false, error: "No active project" };
+    try {
+      await checkoutBranch(activeProjectId, branch);
+      set({ currentBranch: branch });
+      // Refresh file tree and git status after branch switch
+      await Promise.all([
+        get().loadFiles(activeProjectId),
+        get().loadGitStatus(activeProjectId),
+      ]);
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : String(e) };
     }
   },
 
@@ -291,18 +366,59 @@ export const usePreviewStore = create<PreviewStore>((set, get) => ({
         activeTerminalSessionId: newSession.id,
       };
     }),
-  closeTerminalSession: (id) =>
-    set((state) => {
-      if (state.terminalSessions.length === 1) return state;
-      const sessions = state.terminalSessions.filter((session) => session.id !== id);
-      const activeTerminalSessionId =
-        state.activeTerminalSessionId === id ? sessions[0].id : state.activeTerminalSessionId;
-      return { terminalSessions: sessions, activeTerminalSessionId };
-    }),
+  addRealTerminalSession: async () => {
+    const { activeProjectId, terminalSessions } = get();
+    if (!activeProjectId) {
+      // Fallback to local-only session
+      get().addTerminalSession();
+      return;
+    }
+    try {
+      const { id: backendId, cwd } = await createTerminalSession(activeProjectId);
+      const index = terminalSessions.length + 1;
+      const newSession: TerminalSession = {
+        id: `term-${nanoid(6)}`,
+        name: `Shell ${index}`,
+        lines: [{ id: `line-${nanoid(6)}`, type: "info", text: `Connected to ${cwd}` }],
+        backendId,
+      };
+      set({
+        terminalSessions: [...terminalSessions, newSession],
+        activeTerminalSessionId: newSession.id,
+      });
+    } catch {
+      // Fallback
+      get().addTerminalSession();
+    }
+  },
+  closeTerminalSession: (id) => {
+    const state = get();
+    const session = state.terminalSessions.find((s) => s.id === id);
+    // Kill backend session if it exists
+    if (session?.backendId) {
+      killTerminalSession(session.backendId).catch(() => {});
+    }
+    if (state.terminalSessions.length === 1) return;
+    const sessions = state.terminalSessions.filter((s) => s.id !== id);
+    const activeTerminalSessionId =
+      state.activeTerminalSessionId === id ? sessions[0].id : state.activeTerminalSessionId;
+    set({ terminalSessions: sessions, activeTerminalSessionId });
+  },
   appendTerminalLine: (line) =>
     set((state) => ({
       terminalSessions: state.terminalSessions.map((session) =>
         session.id === state.activeTerminalSessionId
+          ? {
+              ...session,
+              lines: [...session.lines, { id: `line-${nanoid(6)}`, ...line }],
+            }
+          : session
+      ),
+    })),
+  appendTerminalLineToSession: (sessionId, line) =>
+    set((state) => ({
+      terminalSessions: state.terminalSessions.map((session) =>
+        session.id === sessionId
           ? {
               ...session,
               lines: [...session.lines, { id: `line-${nanoid(6)}`, ...line }],
@@ -324,6 +440,41 @@ export const usePreviewStore = create<PreviewStore>((set, get) => ({
     })),
   setTerminalRunning: (running) => set({ terminalRunning: running }),
   stopTerminal: () => set({ terminalRunning: false }),
+  execCommand: async (command) => {
+    const { activeTerminalSessionId, terminalSessions } = get();
+    const session = terminalSessions.find((s) => s.id === activeTerminalSessionId);
+    if (!session) return;
+
+    // Show the command line
+    get().appendTerminalLine({ type: "cmd", text: `$ ${command}` });
+
+    if (session.backendId) {
+      // Real shell session — send to backend
+      set({ terminalRunning: true });
+      try {
+        const result = await execTerminalCommand(session.backendId, command);
+        for (const line of result.lines) {
+          get().appendTerminalLineToSession(activeTerminalSessionId, {
+            type: line.type,
+            text: line.text,
+          });
+        }
+      } catch (e) {
+        get().appendTerminalLineToSession(activeTerminalSessionId, {
+          type: "err",
+          text: e instanceof Error ? e.message : String(e),
+        });
+      } finally {
+        set({ terminalRunning: false });
+      }
+    } else {
+      // No backend session — just show info
+      get().appendTerminalLine({
+        type: "info",
+        text: "This is an agent output terminal. Use '+' to create an interactive shell.",
+      });
+    }
+  },
 
   // --- Images ---
   selectImage: (id) => set({ selectedImageId: id }),

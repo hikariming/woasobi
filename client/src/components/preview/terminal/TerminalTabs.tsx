@@ -6,7 +6,7 @@ interface TerminalTabsProps {
   sessions: TerminalSession[];
   activeId: string;
   onSwitch: (id: string) => void;
-  onAdd: () => void;
+  onAdd: () => void | Promise<void>;
   onClose: (id: string) => void;
 }
 

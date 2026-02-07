@@ -5,6 +5,7 @@ import agentRoutes from './routes/agent.js';
 import healthRoutes from './routes/health.js';
 import projectRoutes from './routes/projects.js';
 import threadRoutes from './routes/threads.js';
+import terminalRoutes from './routes/terminal.js';
 import { ensureDataDir } from './storage/index.js';
 
 const app = new Hono();
@@ -21,6 +22,7 @@ app.route('/agent', agentRoutes);
 app.route('/health', healthRoutes);
 app.route('/projects', projectRoutes);
 app.route('/threads', threadRoutes);
+app.route('/terminal', terminalRoutes);
 
 // Root
 app.get('/', (c) => {
