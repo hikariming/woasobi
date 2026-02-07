@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import type { Components } from 'react-markdown';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { Copy, Check, ChevronDown, ChevronRight, Terminal, User, Bot } from 'lucide-react';
@@ -48,8 +49,8 @@ export function MessageBubble({ message, isStreaming }: Props) {
     });
   };
 
-  const markdownComponents = {
-    code({ className, children, ...props }: { className?: string; children?: React.ReactNode; [key: string]: unknown }) {
+  const markdownComponents: Components = {
+    code({ className, children, ...props }) {
       const match = /language-(\w+)/.exec(className || '');
       const codeStr = String(children).replace(/\n$/, '');
 
@@ -85,13 +86,13 @@ export function MessageBubble({ message, isStreaming }: Props) {
         </code>
       );
     },
-    p({ children }: { children?: React.ReactNode }) {
+    p({ children }) {
       return <p className="mb-2 last:mb-0 leading-relaxed">{children}</p>;
     },
-    ul({ children }: { children?: React.ReactNode }) {
+    ul({ children }) {
       return <ul className="list-disc list-inside mb-2 space-y-1">{children}</ul>;
     },
-    ol({ children }: { children?: React.ReactNode }) {
+    ol({ children }) {
       return <ol className="list-decimal list-inside mb-2 space-y-1">{children}</ol>;
     },
   };

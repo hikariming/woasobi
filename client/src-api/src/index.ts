@@ -5,8 +5,9 @@ import agentRoutes from './routes/agent.js';
 import healthRoutes from './routes/health.js';
 import projectRoutes from './routes/projects.js';
 import threadRoutes from './routes/threads.js';
-import terminalRoutes from './routes/terminal.js';
+import terminalRoutes, { setupTerminalWebSocket } from './routes/terminal.js';
 import { ensureDataDir } from './storage/index.js';
+import { discoverClaudeCommands } from './agents/claude.js';
 
 const app = new Hono();
 
@@ -42,6 +43,7 @@ app.get('/', (c) => {
       'PATCH /threads/:id - Update thread',
       'DELETE /threads/:id - Delete thread',
       'GET /threads/:id/messages - Get messages',
+      'WS /terminal/ws?projectId=... - Terminal WebSocket',
     ],
   });
 });
@@ -55,6 +57,12 @@ ensureDataDir().then(() => {
   const server = serve({ fetch: app.fetch, port }, (info) => {
     console.log(`[WoaSobi API] Running at http://localhost:${info.port}`);
   });
+
+  // Attach WebSocket server for terminal sessions
+  setupTerminalWebSocket(server);
+
+  // Background: discover Claude slash commands (non-blocking)
+  discoverClaudeCommands().catch(() => {});
 
   // Graceful shutdown
   function shutdown() {

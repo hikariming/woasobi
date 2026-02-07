@@ -8,12 +8,16 @@
  */
 
 import { execSync } from 'child_process';
-import { existsSync, readdirSync } from 'fs';
+import { existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { homedir, platform } from 'os';
 import { join } from 'path';
 import { query, type Options } from '@anthropic-ai/claude-agent-sdk';
 import { nanoid } from 'nanoid';
 import type { AgentConfig, AgentMessage, ConversationMessage } from './types.js';
+
+const DATA_DIR = join(homedir(), '.woasobi');
+const COMMANDS_CACHE_FILE = join(DATA_DIR, 'claude-commands.json');
+const COMMANDS_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 /**
  * Build extended PATH that includes common package manager bin locations
@@ -173,9 +177,124 @@ export interface SlashCommandInfo {
   argumentHint: string;
 }
 let cachedClaudeCommands: SlashCommandInfo[] | null = null;
+let discoveringClaudeCommands: Promise<SlashCommandInfo[] | null> | null = null;
 
 export function getCachedClaudeCommands(): SlashCommandInfo[] | null {
   return cachedClaudeCommands;
+}
+
+function normalizeSlashCommands(commands: string[]): SlashCommandInfo[] {
+  const seen = new Set<string>();
+  const normalized: SlashCommandInfo[] = [];
+  for (const raw of commands) {
+    const name = String(raw || '').trim().replace(/^\//, '');
+    if (!name || seen.has(name)) continue;
+    seen.add(name);
+    normalized.push({ name, description: '', argumentHint: '' });
+  }
+  return normalized;
+}
+
+/** Load commands from disk cache if fresh enough */
+function loadCommandsFromDisk(): SlashCommandInfo[] | null {
+  try {
+    if (!existsSync(COMMANDS_CACHE_FILE)) return null;
+    const raw = readFileSync(COMMANDS_CACHE_FILE, 'utf-8');
+    const data = JSON.parse(raw) as { timestamp: number; commands: SlashCommandInfo[] };
+    if (Date.now() - data.timestamp > COMMANDS_CACHE_TTL_MS) return null;
+    if (!Array.isArray(data.commands) || data.commands.length === 0) return null;
+    return data.commands;
+  } catch {
+    return null;
+  }
+}
+
+/** Persist commands to disk */
+function saveCommandsToDisk(commands: SlashCommandInfo[]): void {
+  try {
+    if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
+    writeFileSync(
+      COMMANDS_CACHE_FILE,
+      JSON.stringify({ timestamp: Date.now(), commands }, null, 2),
+      'utf-8',
+    );
+  } catch {
+    // Best-effort
+  }
+}
+
+// Load from disk at module init
+cachedClaudeCommands = loadCommandsFromDisk();
+if (cachedClaudeCommands) {
+  console.log(`[Claude] Loaded ${cachedClaudeCommands.length} cached slash commands from disk`);
+}
+
+/**
+ * Try to proactively discover Claude slash commands from the init system event.
+ * Results are cached in memory and on disk (~/.woasobi/claude-commands.json).
+ */
+export async function discoverClaudeCommands(): Promise<SlashCommandInfo[] | null> {
+  if (cachedClaudeCommands && cachedClaudeCommands.length > 0) {
+    return cachedClaudeCommands;
+  }
+  if (discoveringClaudeCommands) return discoveringClaudeCommands;
+
+  discoveringClaudeCommands = (async () => {
+    const claudePath = findClaudeCode();
+    if (!claudePath) return null;
+
+    const abortController = new AbortController();
+    const timeout = setTimeout(() => abortController.abort(), 15_000);
+
+    // Build environment like runClaude() so binary discovery is consistent.
+    const env: Record<string, string> = {};
+    for (const [key, value] of Object.entries(process.env)) {
+      if (value !== undefined) env[key] = value;
+    }
+    env.PATH = getExtendedPath();
+
+    const options: Options = {
+      tools: { type: 'preset', preset: 'claude_code' },
+      settingSources: ['user', 'project'],
+      permissionMode: 'default',
+      allowDangerouslySkipPermissions: false,
+      abortController,
+      env,
+      pathToClaudeCodeExecutable: claudePath,
+      maxTurns: 1,
+    };
+
+    try {
+      for await (const message of query({ prompt: '', options })) {
+        const msg = message as Record<string, unknown>;
+        if (msg.type === 'system' && msg.subtype === 'init') {
+          const commands = Array.isArray(msg.slash_commands)
+            ? (msg.slash_commands as unknown[]).map((v) => String(v))
+            : [];
+          if (commands.length > 0) {
+            cachedClaudeCommands = normalizeSlashCommands(commands);
+            saveCommandsToDisk(cachedClaudeCommands);
+            console.log(`[Claude] Discovered ${cachedClaudeCommands.length} slash commands`);
+            return cachedClaudeCommands;
+          }
+          break;
+        }
+      }
+    } catch {
+      // Best-effort discovery only; caller handles fallback.
+    } finally {
+      clearTimeout(timeout);
+      abortController.abort(); // ensure session is cleaned up
+    }
+
+    return null;
+  })();
+
+  try {
+    return await discoveringClaudeCommands;
+  } finally {
+    discoveringClaudeCommands = null;
+  }
 }
 
 export function stopClaudeSession(sessionId: string): boolean {
@@ -195,7 +314,8 @@ export async function* runClaude(
   prompt: string,
   config: AgentConfig,
   conversation?: ConversationMessage[],
-  permissionMode?: string
+  permissionMode?: string,
+  isSlashCommand?: boolean
 ): AsyncGenerator<AgentMessage> {
   const sessionId = nanoid(10);
   const abortController = new AbortController();
@@ -232,9 +352,8 @@ export async function* runClaude(
     env.ANTHROPIC_MODEL = config.model;
   }
 
-  // Build prompt with conversation context
-  const conversationContext = formatConversation(conversation);
-  const fullPrompt = conversationContext + prompt;
+  // Slash commands must be passed through raw; prepended context can break command parsing.
+  const fullPrompt = isSlashCommand ? prompt : (formatConversation(conversation) + prompt);
 
   // Dedup tracking
   const sentTextHashes = new Set<string>();
@@ -313,17 +432,13 @@ export async function* runClaude(
         }
       }
 
-      // Process system messages (init, status)
+      // Process system messages (init, status, and others like slash command results)
       if (msg.type === 'system') {
         const sysMsg = msg as Record<string, unknown>;
         if (sysMsg.subtype === 'init') {
           const commands = sysMsg.slash_commands as string[] | undefined;
           if (commands) {
-            cachedClaudeCommands = commands.map(name => ({
-              name,
-              description: '',
-              argumentHint: '',
-            }));
+            cachedClaudeCommands = normalizeSlashCommands(commands);
           }
           yield {
             type: 'init',
@@ -343,11 +458,22 @@ export async function* runClaude(
             statusText: getStatusText(sysMsg),
             awaitingPermission: isAwaitingPermission(sysMsg),
           };
+        } else {
+          // Other system subtypes (e.g., slash command results)
+          const text = getStatusText(sysMsg);
+          if (text) {
+            yield { type: 'text', content: text };
+          }
         }
       }
 
       // Process result
       if (msg.type === 'result') {
+        // The SDK may include a result text (e.g., for slash command responses)
+        const resultObj = msg as Record<string, unknown>;
+        if (typeof resultObj.result === 'string' && resultObj.result.trim()) {
+          yield { type: 'text', content: resultObj.result };
+        }
         yield {
           type: 'result',
           content: msg.subtype,

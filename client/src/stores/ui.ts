@@ -2,7 +2,7 @@ import { create } from "zustand";
 import type { PreviewTab } from "@/types";
 import { getDefaultModelForMode } from "@/config/models";
 import { checkHealth, fetchSlashCommands } from "@/lib/api/agent";
-import { getDefaultPermissionMode, type SlashCommand } from "@/config/commands";
+import { getDefaultPermissionMode, DEFAULT_CLAUDE_COMMANDS, CODEX_COMMANDS, type SlashCommand } from "@/config/commands";
 
 type SecondaryPanel = "skills" | "tools" | "automations" | null;
 
@@ -57,9 +57,17 @@ export const useUIStore = create<UIStore>((set) => ({
   setSlashCommands: (cmds) => set({ slashCommands: cmds }),
   setPermissionMode: (mode) => set({ permissionMode: mode }),
   loadSlashCommands: async (provider) => {
-    const cmds = await fetchSlashCommands(provider);
-    if (cmds.length > 0) {
-      set({ slashCommands: cmds });
+    // Set local defaults immediately so the dropdown is never empty
+    const defaults = provider === 'codex' ? CODEX_COMMANDS : DEFAULT_CLAUDE_COMMANDS;
+    set({ slashCommands: defaults });
+    // Then try to get live commands from API (may include extra commands from the session)
+    try {
+      const cmds = await fetchSlashCommands(provider);
+      if (cmds.length > 0) {
+        set({ slashCommands: cmds });
+      }
+    } catch {
+      // Keep defaults
     }
   },
   checkBackendHealth: async () => {

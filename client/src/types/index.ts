@@ -107,8 +107,8 @@ export interface TerminalSession {
   id: string;
   name: string;
   lines: TerminalLine[];
-  /** Backend shell session ID — if set, this is a real interactive terminal */
-  backendId?: string;
+  /** Project ID — if set, this is an interactive shell session (xterm.js + WebSocket) */
+  projectId?: string;
 }
 
 export interface PreviewImageItem {

@@ -100,8 +100,8 @@ export async function* runCodex(
     env.CODEX_MODEL = config.model;
   }
 
-  // Spawn codex process
-  const proc = spawn(codexPath, ['--quiet', prompt], {
+  // Spawn codex process in JSON event mode so we can extract token usage reliably.
+  const proc = spawn(codexPath, ['exec', '--json', prompt], {
     cwd: process.cwd(),
     env: env as Record<string, string>,
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -133,8 +133,56 @@ export async function* runCodex(
   const stdout = stdoutChunks.join('');
   const stderr = stderrChunks.join('');
 
+  let combinedText = '';
+  let inputTokens: number | undefined;
+  let cachedInputTokens: number | undefined;
+  let outputTokens: number | undefined;
+
   if (stdout) {
-    yield { type: 'text', content: stdout };
+    const lines = stdout.split('\n').map((line) => line.trim()).filter(Boolean);
+    const textParts: string[] = [];
+    for (const line of lines) {
+      try {
+        const evt = JSON.parse(line) as Record<string, unknown>;
+        if (evt.type === 'item.completed') {
+          const item = evt.item as Record<string, unknown> | undefined;
+          if (item && item.type === 'agent_message' && typeof item.text === 'string') {
+            textParts.push(item.text);
+          }
+        } else if (evt.type === 'turn.completed') {
+          const usage = evt.usage as Record<string, unknown> | undefined;
+          if (usage) {
+            const inTok = usage.input_tokens;
+            const cachedTok = usage.cached_input_tokens;
+            const outTok = usage.output_tokens;
+            if (typeof inTok === 'number') inputTokens = inTok;
+            if (typeof cachedTok === 'number') cachedInputTokens = cachedTok;
+            if (typeof outTok === 'number') outputTokens = outTok;
+          }
+        }
+      } catch {
+        // Fallback for unexpected non-JSON output
+        textParts.push(line);
+      }
+    }
+
+    combinedText = textParts.join('\n\n').trim();
+    if (combinedText) {
+      yield { type: 'text', content: combinedText };
+    }
+  }
+
+  if (
+    inputTokens !== undefined ||
+    cachedInputTokens !== undefined ||
+    outputTokens !== undefined
+  ) {
+    yield {
+      type: 'result',
+      inputTokens,
+      cachedInputTokens,
+      outputTokens,
+    };
   }
 
   if (exitCode !== 0) {
@@ -144,7 +192,7 @@ export async function* runCodex(
 
     if (isApiKeyError) {
       yield { type: 'error', message: '__API_KEY_ERROR__' };
-    } else {
+    } else if (!combinedText) {
       yield { type: 'error', message: errorMsg };
     }
   }

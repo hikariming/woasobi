@@ -174,33 +174,4 @@ export async function checkoutBranch(projectId: string, branch: string): Promise
 }
 
 // --- Terminal ---
-
-export async function createTerminalSession(projectId: string): Promise<{ id: string; cwd: string }> {
-  const res = await fetch(`${API_BASE_URL}/terminal/create`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ projectId }),
-  });
-  if (!res.ok) throw new Error(`Failed to create terminal: ${res.status}`);
-  return res.json();
-}
-
-export async function execTerminalCommand(
-  sessionId: string,
-  command: string
-): Promise<{ lines: Array<{ type: 'out' | 'err'; text: string }> }> {
-  const res = await fetch(`${API_BASE_URL}/terminal/${sessionId}/exec`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ command }),
-  });
-  if (!res.ok) throw new Error(`Failed to exec command: ${res.status}`);
-  return res.json();
-}
-
-export async function killTerminalSession(sessionId: string): Promise<void> {
-  const res = await fetch(`${API_BASE_URL}/terminal/${sessionId}/kill`, {
-    method: 'POST',
-  });
-  if (!res.ok) throw new Error(`Failed to kill terminal: ${res.status}`);
-}
+// Terminal now uses WebSocket (via XTerminal component) instead of REST endpoints.

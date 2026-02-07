@@ -13,6 +13,10 @@ import {
 import { useSettingsStore } from "./settings";
 import { useUIStore } from "./ui";
 import { usePreviewStore } from "./preview";
+import { getModelsForMode } from "@/config/models";
+import { getPermissionModesForMode } from "@/config/commands";
+import { handleCodexSlashCommand, type CodexUsageSnapshot } from "@/lib/codexSlash";
+import { handleClaudeSlashCommand } from "@/lib/claudeSlash";
 
 /** Extract a human-readable summary for non-Bash tool calls */
 function getToolSummary(name: string, input: Record<string, unknown>): string {
@@ -43,6 +47,7 @@ interface ChatStore {
   currentSessionId: string | null;
   abortController: AbortController | null;
   threadRuntimeStatus: Record<string, ThreadRuntimeStatus>;
+  codexUsageByThread: Record<string, CodexUsageSnapshot>;
   threadsLoading: boolean;
   messagesLoading: boolean;
   loadThreads: (projectId?: string) => Promise<void>;
@@ -67,6 +72,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   currentSessionId: null,
   abortController: null,
   threadRuntimeStatus: {},
+  codexUsageByThread: {},
   threadsLoading: false,
   messagesLoading: false,
 
@@ -131,6 +137,122 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     const { activeThreadId } = get();
     if (!activeThreadId) return;
 
+    const normalizedInput = content.trim();
+    const initialUIState = useUIStore.getState();
+
+    // Claude Code slash commands — handle locally
+    if (initialUIState.activeMode === "claudeCode" && normalizedInput.startsWith("/")) {
+      const threadMessages = get().messages[activeThreadId] || [];
+      const ui = useUIStore.getState();
+      const slash = handleClaudeSlashCommand({
+        input: normalizedInput,
+        currentModelId: ui.activeModelId,
+        availableModelIds: getModelsForMode("claudeCode").map((m) => m.id),
+        currentPermissionMode: ui.permissionMode,
+        availablePermissionModes: getPermissionModesForMode("claudeCode").map((m) => m.value),
+        threadMessages,
+      });
+
+      // Some commands (e.g. /review, /init) are rewritten as regular prompts
+      if (slash.forwardToAgent) {
+        // Fall through to the normal send flow below with the rewritten prompt
+        content = slash.response;
+      } else {
+        if (slash.nextModelId) {
+          ui.setActiveModelId(slash.nextModelId);
+          useSettingsStore.getState().setActiveClaudeModel(slash.nextModelId);
+        }
+        if (slash.nextPermissionMode) {
+          ui.setPermissionMode(slash.nextPermissionMode);
+        }
+
+        const userMsg: Message = {
+          id: `m-${nanoid(6)}`,
+          threadId: activeThreadId,
+          role: "user",
+          content: normalizedInput,
+          timestamp: new Date().toISOString(),
+        };
+        const assistantMsg: Message = {
+          id: `m-${nanoid(6)}`,
+          threadId: activeThreadId,
+          role: "assistant",
+          content: slash.response,
+          timestamp: new Date().toISOString(),
+        };
+
+        set((s) => ({
+          messages: {
+            ...s.messages,
+            [activeThreadId]: slash.clearThread
+              ? [userMsg, assistantMsg]
+              : [...(s.messages[activeThreadId] || []), userMsg, assistantMsg],
+          },
+        }));
+        return;
+      }
+    }
+
+    if (initialUIState.activeMode === "codex" && normalizedInput.startsWith("/")) {
+      const userMsg: Message = {
+        id: `m-${nanoid(6)}`,
+        threadId: activeThreadId,
+        role: "user",
+        content,
+        timestamp: new Date().toISOString(),
+      };
+
+      const threadMessages = get().messages[activeThreadId] || [];
+      const usage = get().codexUsageByThread[activeThreadId];
+      const ui = useUIStore.getState();
+      const slash = handleCodexSlashCommand({
+        input: normalizedInput,
+        currentModelId: ui.activeModelId,
+        availableModelIds: getModelsForMode("codex").map((m) => m.id),
+        currentApprovalMode: ui.permissionMode,
+        availableApprovalModes: getPermissionModesForMode("codex").map((m) => m.value),
+        usage,
+        recentUserMessages: threadMessages
+          .filter((m) => m.role === "user")
+          .slice(-10)
+          .map((m) => m.content.replace(/\n+/g, " ").slice(0, 120)),
+      });
+
+      if (slash.nextModelId) {
+        ui.setActiveModelId(slash.nextModelId);
+        useSettingsStore.getState().setActiveCodexModel(slash.nextModelId);
+      }
+      if (slash.nextApprovalMode) {
+        ui.setPermissionMode(slash.nextApprovalMode);
+      }
+
+      const assistantMsg: Message = {
+        id: `m-${nanoid(6)}`,
+        threadId: activeThreadId,
+        role: "assistant",
+        content: slash.response,
+        timestamp: new Date().toISOString(),
+      };
+
+      set((s) => ({
+        messages: {
+          ...s.messages,
+          [activeThreadId]: slash.clearThread
+            ? [userMsg, assistantMsg]
+            : [...(s.messages[activeThreadId] || []), userMsg, assistantMsg],
+        },
+      }));
+
+      if (slash.clearThread) {
+        set((s) => {
+          const nextUsage = { ...s.codexUsageByThread };
+          delete nextUsage[activeThreadId];
+          return { codexUsageByThread: nextUsage };
+        });
+      }
+      return;
+    }
+
     const messageId = `m-${nanoid(6)}`;
 
     // Add user message optimistically
@@ -183,6 +305,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     const parts: MessagePart[] = [];
     let cost: number | undefined;
     let duration: number | undefined;
+    let codexUsage: CodexUsageSnapshot | undefined;
 
     // Prepare preview panel for this run
     const preview = usePreviewStore.getState();
@@ -336,6 +459,13 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           case "result":
             cost = msg.cost;
             duration = msg.duration;
+            if (provider === "codex" && typeof msg.inputTokens === "number" && typeof msg.cachedInputTokens === "number" && typeof msg.outputTokens === "number") {
+              codexUsage = {
+                inputTokens: msg.inputTokens,
+                cachedInputTokens: msg.cachedInputTokens,
+                outputTokens: msg.outputTokens,
+              };
+            }
             break;
 
           case "error": {
@@ -376,6 +506,13 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         preview.loadGitStatus(projectId);
       }
 
+      // For slash commands that produced no visible output, show a fallback message
+      if (!fullText && content.trim().startsWith('/')) {
+        const cmd = content.trim().split(/\s/)[0];
+        fullText = `\`${cmd}\` executed.`;
+        parts.push({ type: 'text', content: fullText });
+      }
+
       // Create final assistant message in local state
       if (fullText) {
         const aiMsg: Message = {
@@ -409,6 +546,9 @@ export const useChatStore = create<ChatStore>((set, get) => ({
               aiMsg,
             ],
           },
+          codexUsageByThread: codexUsage
+            ? { ...s.codexUsageByThread, [activeThreadId]: codexUsage }
+            : s.codexUsageByThread,
         }));
 
         // Auto-clear completed status after 5s (historical threads don't need indicators)
@@ -427,7 +567,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         // Refresh thread list to get updated timestamps
         get().loadThreads();
       } else {
-        set({
+        set((s) => ({
           isStreaming: false,
           streamingText: null,
           streamingToolCalls: [],
@@ -435,10 +575,13 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           currentSessionId: null,
           abortController: null,
           threadRuntimeStatus: {
-            ...get().threadRuntimeStatus,
+            ...s.threadRuntimeStatus,
             [activeThreadId]: "completed",
           },
-        });
+          codexUsageByThread: codexUsage
+            ? { ...s.codexUsageByThread, [activeThreadId]: codexUsage }
+            : s.codexUsageByThread,
+        }));
 
         // Auto-clear completed status after 5s
         setTimeout(() => {
@@ -490,12 +633,15 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         const threads = s.threads.filter((t) => t.id !== id);
         const messages = { ...s.messages };
         const threadRuntimeStatus = { ...s.threadRuntimeStatus };
+        const codexUsageByThread = { ...s.codexUsageByThread };
         delete messages[id];
         delete threadRuntimeStatus[id];
+        delete codexUsageByThread[id];
         return {
           threads,
           messages,
           threadRuntimeStatus,
+          codexUsageByThread,
           activeThreadId: s.activeThreadId === id ? (threads[0]?.id || null) : s.activeThreadId,
         };
       });
@@ -522,13 +668,16 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         const removedIds = s.threads.filter((t) => t.projectId === projectId).map((t) => t.id);
         const messages = { ...s.messages };
         const threadRuntimeStatus = { ...s.threadRuntimeStatus };
+        const codexUsageByThread = { ...s.codexUsageByThread };
         for (const id of removedIds) delete messages[id];
         for (const id of removedIds) delete threadRuntimeStatus[id];
+        for (const id of removedIds) delete codexUsageByThread[id];
         const threads = s.threads.filter((t) => t.projectId !== projectId);
         return {
           threads,
           messages,
           threadRuntimeStatus,
+          codexUsageByThread,
           activeThreadId: removedIds.includes(s.activeThreadId || '') ? (threads[0]?.id || null) : s.activeThreadId,
         };
       });

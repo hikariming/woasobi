@@ -24,6 +24,9 @@ export interface AgentMessage {
   // result fields
   cost?: number;
   duration?: number;
+  inputTokens?: number;
+  cachedInputTokens?: number;
+  outputTokens?: number;
   // error fields
   message?: string;
   // init/status fields

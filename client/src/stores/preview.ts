@@ -19,9 +19,6 @@ import {
   commitChanges,
   fetchBranches,
   checkoutBranch,
-  createTerminalSession,
-  execTerminalCommand,
-  killTerminalSession,
 } from "@/lib/api/data";
 
 type ChangesFilter = "all" | "staged" | "unstaged";
@@ -124,12 +121,6 @@ interface PreviewStore {
   clearTouchedFiles: () => void;
 }
 
-const defaultSession: TerminalSession = {
-  id: "term-agent",
-  name: "Agent",
-  lines: [],
-};
-
 export const usePreviewStore = create<PreviewStore>((set, get) => ({
   // Active project context
   activeProjectId: null,
@@ -158,9 +149,9 @@ export const usePreviewStore = create<PreviewStore>((set, get) => ({
   artifactRefreshing: false,
   artifactError: null,
 
-  // Terminal — start with one empty session
-  terminalSessions: [{ ...defaultSession }],
-  activeTerminalSessionId: defaultSession.id,
+  // Terminal — start empty, sessions created on demand
+  terminalSessions: [],
+  activeTerminalSessionId: "",
   terminalRunning: false,
   terminalAutoScroll: true,
 
@@ -369,52 +360,60 @@ export const usePreviewStore = create<PreviewStore>((set, get) => ({
   addRealTerminalSession: async () => {
     const { activeProjectId, terminalSessions } = get();
     if (!activeProjectId) {
-      // Fallback to local-only session
+      // No project — fallback to local-only session
       get().addTerminalSession();
       return;
     }
-    try {
-      const { id: backendId, cwd } = await createTerminalSession(activeProjectId);
-      const index = terminalSessions.length + 1;
-      const newSession: TerminalSession = {
-        id: `term-${nanoid(6)}`,
-        name: `Shell ${index}`,
-        lines: [{ id: `line-${nanoid(6)}`, type: "info", text: `Connected to ${cwd}` }],
-        backendId,
-      };
-      set({
-        terminalSessions: [...terminalSessions, newSession],
-        activeTerminalSessionId: newSession.id,
-      });
-    } catch {
-      // Fallback
-      get().addTerminalSession();
-    }
+    const index = terminalSessions.length + 1;
+    const newSession: TerminalSession = {
+      id: `term-${nanoid(6)}`,
+      name: `Shell ${index}`,
+      lines: [],
+      projectId: activeProjectId,
+    };
+    set({
+      terminalSessions: [...terminalSessions, newSession],
+      activeTerminalSessionId: newSession.id,
+    });
   },
   closeTerminalSession: (id) => {
     const state = get();
-    const session = state.terminalSessions.find((s) => s.id === id);
-    // Kill backend session if it exists
-    if (session?.backendId) {
-      killTerminalSession(session.backendId).catch(() => {});
-    }
-    if (state.terminalSessions.length === 1) return;
     const sessions = state.terminalSessions.filter((s) => s.id !== id);
     const activeTerminalSessionId =
-      state.activeTerminalSessionId === id ? sessions[0].id : state.activeTerminalSessionId;
+      state.activeTerminalSessionId === id
+        ? (sessions[0]?.id ?? "")
+        : state.activeTerminalSessionId;
     set({ terminalSessions: sessions, activeTerminalSessionId });
+    // WebSocket cleanup happens automatically when XTerminal unmounts
   },
   appendTerminalLine: (line) =>
-    set((state) => ({
-      terminalSessions: state.terminalSessions.map((session) =>
-        session.id === state.activeTerminalSessionId
-          ? {
-              ...session,
-              lines: [...session.lines, { id: `line-${nanoid(6)}`, ...line }],
-            }
-          : session
-      ),
-    })),
+    set((state) => {
+      // Find agent session (no projectId) to append to
+      const agentSession = state.terminalSessions.find((s) => !s.projectId);
+      if (!agentSession) {
+        // Create an agent output session on the fly
+        const newSession: TerminalSession = {
+          id: `term-agent-${nanoid(6)}`,
+          name: "Agent",
+          lines: [{ id: `line-${nanoid(6)}`, ...line }],
+        };
+        return {
+          terminalSessions: [newSession, ...state.terminalSessions],
+          activeTerminalSessionId: newSession.id,
+        };
+      }
+      return {
+        terminalSessions: state.terminalSessions.map((session) =>
+          session.id === agentSession.id
+            ? {
+                ...session,
+                lines: [...session.lines, { id: `line-${nanoid(6)}`, ...line }],
+              }
+            : session
+        ),
+        activeTerminalSessionId: agentSession.id,
+      };
+    }),
   appendTerminalLineToSession: (sessionId, line) =>
     set((state) => ({
       terminalSessions: state.terminalSessions.map((session) =>
@@ -434,46 +433,15 @@ export const usePreviewStore = create<PreviewStore>((set, get) => ({
     })),
   clearActiveTerminal: () =>
     set((state) => ({
-      terminalSessions: state.terminalSessions.map((session) =>
-        session.id === state.activeTerminalSessionId ? { ...session, lines: [] } : session
-      ),
+      // Clear agent output sessions (no projectId), remove them entirely
+      terminalSessions: state.terminalSessions.filter((s) => !!s.projectId),
+      activeTerminalSessionId: state.terminalSessions.find((s) => !!s.projectId)?.id ?? "",
     })),
   setTerminalRunning: (running) => set({ terminalRunning: running }),
   stopTerminal: () => set({ terminalRunning: false }),
-  execCommand: async (command) => {
-    const { activeTerminalSessionId, terminalSessions } = get();
-    const session = terminalSessions.find((s) => s.id === activeTerminalSessionId);
-    if (!session) return;
-
-    // Show the command line
-    get().appendTerminalLine({ type: "cmd", text: `$ ${command}` });
-
-    if (session.backendId) {
-      // Real shell session — send to backend
-      set({ terminalRunning: true });
-      try {
-        const result = await execTerminalCommand(session.backendId, command);
-        for (const line of result.lines) {
-          get().appendTerminalLineToSession(activeTerminalSessionId, {
-            type: line.type,
-            text: line.text,
-          });
-        }
-      } catch (e) {
-        get().appendTerminalLineToSession(activeTerminalSessionId, {
-          type: "err",
-          text: e instanceof Error ? e.message : String(e),
-        });
-      } finally {
-        set({ terminalRunning: false });
-      }
-    } else {
-      // No backend session — just show info
-      get().appendTerminalLine({
-        type: "info",
-        text: "This is an agent output terminal. Use '+' to create an interactive shell.",
-      });
-    }
+  execCommand: async () => {
+    // Interactive shells are handled directly by XTerminal via WebSocket
+    // Agent output is handled by appendTerminalLine from chat.ts
   },
 
   // --- Images ---

@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { nanoid } from 'nanoid';
-import { runClaude, stopClaudeSession, getCachedClaudeCommands } from '../agents/claude.js';
+import { runClaude, stopClaudeSession, getCachedClaudeCommands, discoverClaudeCommands } from '../agents/claude.js';
 import { runCodex, stopCodexSession } from '../agents/codex.js';
 import { createSSEStream, SSE_HEADERS } from '../utils/sse.js';
 import type { AgentRequest, AgentMessage } from '../agents/types.js';
@@ -113,22 +113,45 @@ async function* persistingWrapper(
   }
 }
 
-// Default Claude commands before any session provides live data
+// Comprehensive Claude Code slash commands with descriptions.
+// Dynamically discovered commands from init events are merged on top of this.
 const DEFAULT_CLAUDE_COMMANDS = [
-  { name: 'compact', description: 'Compact conversation context', argumentHint: '' },
+  { name: 'help', description: 'Show available commands', argumentHint: '' },
+  { name: 'compact', description: 'Compact conversation context', argumentHint: '[instructions]' },
+  { name: 'clear', description: 'Clear conversation history', argumentHint: '' },
   { name: 'review', description: 'Code review', argumentHint: '' },
+  { name: 'usage', description: 'Show token usage information', argumentHint: '' },
+  { name: 'cost', description: 'Show cost information', argumentHint: '' },
+  { name: 'model', description: 'Show or change the model', argumentHint: '[model-name]' },
+  { name: 'permissions', description: 'View and manage permissions', argumentHint: '[mode]' },
   { name: 'init', description: 'Initialize a CLAUDE.md file', argumentHint: '' },
+  { name: 'memory', description: 'Edit CLAUDE.md', argumentHint: '' },
+  { name: 'config', description: 'Edit config', argumentHint: '' },
   { name: 'login', description: 'Log in to your account', argumentHint: '' },
   { name: 'logout', description: 'Log out', argumentHint: '' },
   { name: 'doctor', description: 'Diagnose issues', argumentHint: '' },
-  { name: 'memory', description: 'Edit CLAUDE.md', argumentHint: '' },
-  { name: 'config', description: 'Edit config', argumentHint: '' },
-  { name: 'cost', description: 'Show cost information', argumentHint: '' },
-  { name: 'permissions', description: 'View and manage permissions', argumentHint: '' },
+  { name: 'bug', description: 'Report a bug', argumentHint: '' },
+  { name: 'status', description: 'Show current session status', argumentHint: '' },
+  { name: 'mcp', description: 'Show MCP server status', argumentHint: '' },
+  { name: 'allowed-tools', description: 'Manage allowed tools', argumentHint: '' },
+  { name: 'terminal', description: 'Open a terminal', argumentHint: '' },
+  { name: 'vim', description: 'Toggle vim keybindings', argumentHint: '' },
+  { name: 'theme', description: 'Change the theme', argumentHint: '[theme-name]' },
+  { name: 'undo', description: 'Undo last file changes', argumentHint: '' },
+  { name: 'diff', description: 'Show recent code changes', argumentHint: '' },
+  { name: 'pr-comments', description: 'Show PR review comments', argumentHint: '' },
+  { name: 'search', description: 'Search the codebase', argumentHint: '<query>' },
+  { name: 'add-dir', description: 'Add a directory to context', argumentHint: '<path>' },
 ];
+
+// Build a description lookup so we can enrich discovered commands that only have names
+const COMMAND_DESC_MAP = new Map(
+  DEFAULT_CLAUDE_COMMANDS.map(c => [c.name, { description: c.description, argumentHint: c.argumentHint }])
+);
 
 const CODEX_COMMANDS = [
   { name: 'help', description: 'Show available commands', argumentHint: '' },
+  { name: 'usage', description: 'Show token usage from latest Codex turn', argumentHint: '' },
   { name: 'model', description: 'Change the model', argumentHint: '<model-name>' },
   { name: 'approval', description: 'Change approval mode', argumentHint: '<mode>' },
   { name: 'undo', description: 'Undo last file changes', argumentHint: '' },
@@ -137,8 +160,35 @@ const CODEX_COMMANDS = [
   { name: 'compact', description: 'Compact conversation context', argumentHint: '' },
 ];
 
+/**
+ * Merge discovered commands with the hardcoded fallback list.
+ * Discovered commands (primary) take precedence for the set of names,
+ * but we enrich them with descriptions from the fallback/description map.
+ */
+function mergeCommands(
+  primary: Array<{ name: string; description: string; argumentHint: string }>,
+  fallback: Array<{ name: string; description: string; argumentHint: string }>
+) {
+  const merged = new Map<string, { name: string; description: string; argumentHint: string }>();
+  for (const cmd of primary) {
+    // Enrich discovered commands (which may lack descriptions) with known descriptions
+    if (!cmd.description) {
+      const known = COMMAND_DESC_MAP.get(cmd.name);
+      if (known) {
+        merged.set(cmd.name, { name: cmd.name, description: known.description, argumentHint: known.argumentHint });
+        continue;
+      }
+    }
+    merged.set(cmd.name, cmd);
+  }
+  for (const cmd of fallback) {
+    if (!merged.has(cmd.name)) merged.set(cmd.name, cmd);
+  }
+  return Array.from(merged.values());
+}
+
 // Get available slash commands for a provider
-agent.get('/commands/:provider', (c) => {
+agent.get('/commands/:provider', async (c) => {
   const provider = c.req.param('provider');
   if (provider === 'codex') {
     return c.json(CODEX_COMMANDS);
@@ -146,8 +196,14 @@ agent.get('/commands/:provider', (c) => {
   // Claude: use cached from live session, or defaults
   const cached = getCachedClaudeCommands();
   if (cached && cached.length > 0) {
-    return c.json(cached);
+    return c.json(mergeCommands(cached, DEFAULT_CLAUDE_COMMANDS));
   }
+
+  const discovered = await discoverClaudeCommands();
+  if (discovered && discovered.length > 0) {
+    return c.json(mergeCommands(discovered, DEFAULT_CLAUDE_COMMANDS));
+  }
+
   return c.json(DEFAULT_CLAUDE_COMMANDS);
 });
 
@@ -168,6 +224,8 @@ agent.post('/', async (c) => {
   }
 
   const provider = body.provider || 'claude';
+  const trimmedPrompt = body.prompt.trim();
+  const isSlashCommand = /^\/\S+/.test(trimmedPrompt);
   const config = {
     provider,
     apiKey: body.modelConfig?.apiKey,
@@ -179,7 +237,7 @@ agent.post('/', async (c) => {
   if (provider === 'codex') {
     generator = runCodex(body.prompt, config);
   } else {
-    generator = runClaude(body.prompt, config, body.conversation, body.permissionMode);
+    generator = runClaude(body.prompt, config, body.conversation, body.permissionMode, isSlashCommand);
   }
 
   // Wrap with persistence if threadId provided

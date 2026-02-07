@@ -26,6 +26,9 @@ export interface SSEMessage {
   isError?: boolean;
   cost?: number;
   duration?: number;
+  inputTokens?: number;
+  cachedInputTokens?: number;
+  outputTokens?: number;
   message?: string;
   // init/status fields
   permissionMode?: string;
