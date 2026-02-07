@@ -47,4 +47,6 @@ export interface AgentRequest {
     model?: string;
   };
   conversation?: ConversationMessage[];
+  threadId?: string;
+  messageId?: string;
 }

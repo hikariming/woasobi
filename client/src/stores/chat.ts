@@ -1,9 +1,14 @@
 import { create } from "zustand";
 import { nanoid } from "nanoid";
 import type { Message, Thread, ToolCall } from "@/types";
-import { mockThreads } from "@/mocks/threads";
-import { mockMessages } from "@/mocks/messages";
 import { sendAgentRequest, parseSSEStream, stopAgent } from "@/lib/api/agent";
+import {
+  fetchThreads,
+  createThread as apiCreateThread,
+  updateThread as apiUpdateThread,
+  deleteThread as apiDeleteThread,
+  fetchMessages,
+} from "@/lib/api/data";
 import { useSettingsStore } from "./settings";
 import { useUIStore } from "./ui";
 
@@ -16,51 +21,92 @@ interface ChatStore {
   isStreaming: boolean;
   currentSessionId: string | null;
   abortController: AbortController | null;
-  setActiveThread: (id: string) => void;
-  createThread: (workspaceId: string) => void;
+  threadsLoading: boolean;
+  messagesLoading: boolean;
+  loadThreads: (projectId?: string) => Promise<void>;
+  setActiveThread: (id: string) => Promise<void>;
+  createThread: (projectId: string) => Promise<void>;
   sendMessage: (content: string) => void;
   stopStreaming: () => void;
+  deleteThread: (id: string) => Promise<void>;
+  renameThread: (id: string, title: string) => Promise<void>;
 }
 
 export const useChatStore = create<ChatStore>((set, get) => ({
-  threads: mockThreads,
-  activeThreadId: "t-4",
-  messages: mockMessages,
+  threads: [],
+  activeThreadId: null,
+  messages: {},
   streamingText: null,
   streamingToolCalls: [],
   isStreaming: false,
   currentSessionId: null,
   abortController: null,
+  threadsLoading: false,
+  messagesLoading: false,
 
-  setActiveThread: (id) => set({ activeThreadId: id }),
+  loadThreads: async (projectId?) => {
+    set({ threadsLoading: true });
+    try {
+      const threads = await fetchThreads(projectId);
+      set({ threads });
+    } catch {
+      // Backend might be offline
+    } finally {
+      set({ threadsLoading: false });
+    }
+  },
 
-  createThread: (workspaceId) => {
-    const t: Thread = {
-      id: `t-${nanoid(6)}`,
-      title: "New Thread",
-      workspaceId,
-      model: "claude-sonnet-4-5",
-      mode: "agent",
-      updatedAt: "now",
-    };
-    set((s) => ({
-      threads: [t, ...s.threads],
-      activeThreadId: t.id,
-      messages: { ...s.messages, [t.id]: [] },
-    }));
+  setActiveThread: async (id) => {
+    set({ activeThreadId: id });
+
+    // Lazy-load messages if not cached
+    if (!get().messages[id]) {
+      set({ messagesLoading: true });
+      try {
+        const msgs = await fetchMessages(id);
+        // Add threadId to each message (backend omits it since it's in the filename)
+        const withThreadId = msgs.map((m) => ({ ...m, threadId: id }));
+        set((s) => ({
+          messages: { ...s.messages, [id]: withThreadId },
+          messagesLoading: false,
+        }));
+      } catch {
+        set({ messagesLoading: false });
+      }
+    }
+  },
+
+  createThread: async (projectId) => {
+    const uiStore = useUIStore.getState();
+    try {
+      const thread = await apiCreateThread({
+        projectId,
+        mode: uiStore.activeMode === "codex" ? "codex" : "claudeCode",
+        model: uiStore.activeModelId,
+      });
+      set((s) => ({
+        threads: [thread, ...s.threads],
+        activeThreadId: thread.id,
+        messages: { ...s.messages, [thread.id]: [] },
+      }));
+    } catch {
+      // Failed to create thread (backend offline?)
+    }
   },
 
   sendMessage: async (content) => {
     const { activeThreadId } = get();
     if (!activeThreadId) return;
 
-    // Add user message
+    const messageId = `m-${nanoid(6)}`;
+
+    // Add user message optimistically
     const userMsg: Message = {
-      id: `m-${nanoid(6)}`,
+      id: messageId,
       threadId: activeThreadId,
       role: "user",
       content,
-      timestamp: new Date().toLocaleTimeString(),
+      timestamp: new Date().toISOString(),
     };
 
     set((s) => ({
@@ -90,7 +136,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     const threadMsgs = get().messages[activeThreadId] || [];
     const conversation = threadMsgs
       .filter((m) => m.role === "user" || m.role === "assistant")
-      .slice(-20) // Keep last 20 messages max
+      .slice(-20)
       .map((m) => ({ role: m.role, content: m.content }));
 
     let fullText = "";
@@ -104,6 +150,8 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         modelConfig,
         conversation,
         signal: abortController.signal,
+        threadId: activeThreadId,
+        messageId,
       });
 
       await parseSSEStream(response, (msg) => {
@@ -153,13 +201,12 @@ export const useChatStore = create<ChatStore>((set, get) => ({
             break;
 
           case "done":
-            // Will be handled in finally
             break;
         }
       });
     } catch (error) {
       if ((error as Error).name === "AbortError") {
-        // User cancelled - just stop
+        // User cancelled
       } else {
         const errorMsg = error instanceof Error ? error.message : String(error);
         fullText += fullText
@@ -167,7 +214,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           : `**Connection Error:** ${errorMsg}`;
       }
     } finally {
-      // Create final assistant message
+      // Create final assistant message in local state
       if (fullText) {
         const aiMsg: Message = {
           id: `m-${nanoid(6)}`,
@@ -175,7 +222,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           role: "assistant",
           content: fullText,
           toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
-          timestamp: new Date().toLocaleTimeString(),
+          timestamp: new Date().toISOString(),
           cost,
           duration,
           isError: fullText.includes("**Error:**") || fullText.includes("**Connection Error:**"),
@@ -195,6 +242,16 @@ export const useChatStore = create<ChatStore>((set, get) => ({
             ],
           },
         }));
+
+        // Update thread title from first user message if it's still "New Thread"
+        const thread = get().threads.find((t) => t.id === activeThreadId);
+        if (thread && thread.title === "New Thread") {
+          const title = content.slice(0, 50) + (content.length > 50 ? "..." : "");
+          get().renameThread(activeThreadId, title);
+        }
+
+        // Refresh thread list to get updated timestamps
+        get().loadThreads();
       } else {
         set({
           isStreaming: false,
@@ -222,5 +279,34 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       currentSessionId: null,
       abortController: null,
     });
+  },
+
+  deleteThread: async (id) => {
+    try {
+      await apiDeleteThread(id);
+      set((s) => {
+        const threads = s.threads.filter((t) => t.id !== id);
+        const messages = { ...s.messages };
+        delete messages[id];
+        return {
+          threads,
+          messages,
+          activeThreadId: s.activeThreadId === id ? (threads[0]?.id || null) : s.activeThreadId,
+        };
+      });
+    } catch {
+      // Failed
+    }
+  },
+
+  renameThread: async (id, title) => {
+    try {
+      const updated = await apiUpdateThread(id, { title });
+      set((s) => ({
+        threads: s.threads.map((t) => (t.id === id ? updated : t)),
+      }));
+    } catch {
+      // Failed
+    }
   },
 }));

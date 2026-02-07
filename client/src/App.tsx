@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { Group, Panel, Separator } from 'react-resizable-panels';
 import { Sidebar } from '@/components/sidebar/Sidebar';
 import { ChatPanel } from '@/components/chat/ChatPanel';
@@ -5,11 +6,20 @@ import { PreviewPanel } from '@/components/preview/PreviewPanel';
 import { SettingsDialog } from '@/components/settings/SettingsDialog';
 import { StatusBar } from '@/components/layout/StatusBar';
 import { useUIStore } from '@/stores/ui';
+import { useProjectStore } from '@/stores/projects';
+import { useChatStore } from '@/stores/chat';
 import { cn } from '@/lib/utils';
 
 export function App() {
   const sidebarOpen = useUIStore((s) => s.sidebarOpen);
   const previewOpen = useUIStore((s) => s.previewOpen);
+
+  // Initialize persistent data on app start
+  useEffect(() => {
+    useUIStore.getState().checkBackendHealth();
+    useProjectStore.getState().loadProjects();
+    useChatStore.getState().loadThreads();
+  }, []);
 
   return (
     <div className="h-screen w-screen overflow-hidden bg-background text-foreground flex flex-col">

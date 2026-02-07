@@ -36,11 +36,10 @@ export function ChatPanel() {
               <span className="text-sm font-medium text-foreground">{currentThread.title}</span>
               <span className={cn(
                 'text-[10px] px-1.5 py-0.5 rounded font-medium',
-                currentThread.mode === 'agent' ? 'bg-primary/10 text-primary' :
-                currentThread.mode === 'ask' ? 'bg-blue-500/10 text-blue-400' :
+                currentThread.mode === 'claudeCode' ? 'bg-primary/10 text-primary' :
                 'bg-orange-500/10 text-orange-400'
               )}>
-                {currentThread.mode}
+                {currentThread.mode === 'claudeCode' ? 'Claude' : 'Codex'}
               </span>
             </div>
           )}

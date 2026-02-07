@@ -9,6 +9,8 @@ export interface AgentRequestOptions {
   };
   conversation?: Array<{ role: 'user' | 'assistant'; content: string }>;
   signal?: AbortSignal;
+  threadId?: string;
+  messageId?: string;
 }
 
 export interface SSEMessage {
@@ -41,6 +43,8 @@ export async function sendAgentRequest(
       provider: options.provider,
       modelConfig: options.modelConfig,
       conversation: options.conversation,
+      threadId: options.threadId,
+      messageId: options.messageId,
     }),
     signal: options.signal,
   });

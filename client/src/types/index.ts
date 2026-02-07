@@ -1,16 +1,25 @@
-export interface Workspace {
+export interface Project {
   id: string;
   name: string;
   path: string;
+  source: "manual" | "claude" | "codex" | "claude+codex";
+  addedAt: string;
+  pinned?: boolean;
 }
+
+/** @deprecated Use Project instead */
+export type Workspace = Project;
 
 export interface Thread {
   id: string;
+  projectId: string;
   title: string;
-  workspaceId: string;
+  mode: "claudeCode" | "codex";
   model: string;
-  mode: "agent" | "chat" | "ask";
+  createdAt: string;
   updatedAt: string;
+  messageCount: number;
+  sourcePath?: string; // Path to original CLI session file (imported)
 }
 
 export type MessageRole = "user" | "assistant";
