@@ -11,10 +11,11 @@ export interface AgentRequestOptions {
   signal?: AbortSignal;
   threadId?: string;
   messageId?: string;
+  permissionMode?: string;
 }
 
 export interface SSEMessage {
-  type: 'session' | 'text' | 'tool_use' | 'tool_result' | 'result' | 'error' | 'done';
+  type: 'session' | 'init' | 'status' | 'text' | 'tool_use' | 'tool_result' | 'result' | 'error' | 'done';
   sessionId?: string;
   content?: string;
   id?: string;
@@ -26,6 +27,9 @@ export interface SSEMessage {
   cost?: number;
   duration?: number;
   message?: string;
+  // init/status fields
+  permissionMode?: string;
+  slashCommands?: string[];
 }
 
 /**
@@ -45,6 +49,7 @@ export async function sendAgentRequest(
       conversation: options.conversation,
       threadId: options.threadId,
       messageId: options.messageId,
+      permissionMode: options.permissionMode,
     }),
     signal: options.signal,
   });
@@ -136,5 +141,22 @@ export async function parseSSEStream(
     }
   } finally {
     reader.releaseLock();
+  }
+}
+
+/**
+ * Fetch available slash commands for a provider
+ */
+export async function fetchSlashCommands(
+  provider: 'claude' | 'codex'
+): Promise<Array<{ name: string; description: string; argumentHint: string }>> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/agent/commands/${provider}`, {
+      signal: AbortSignal.timeout(3000),
+    });
+    if (!response.ok) return [];
+    return response.json();
+  } catch {
+    return [];
   }
 }

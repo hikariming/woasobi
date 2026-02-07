@@ -149,6 +149,18 @@ function formatConversation(conversation?: ConversationMessage[]): string {
 // Active sessions for abort support
 const sessions = new Map<string, AbortController>();
 
+// Cached slash commands from last init message
+export interface SlashCommandInfo {
+  name: string;
+  description: string;
+  argumentHint: string;
+}
+let cachedClaudeCommands: SlashCommandInfo[] | null = null;
+
+export function getCachedClaudeCommands(): SlashCommandInfo[] | null {
+  return cachedClaudeCommands;
+}
+
 export function stopClaudeSession(sessionId: string): boolean {
   const controller = sessions.get(sessionId);
   if (controller) {
@@ -165,7 +177,8 @@ export function stopClaudeSession(sessionId: string): boolean {
 export async function* runClaude(
   prompt: string,
   config: AgentConfig,
-  conversation?: ConversationMessage[]
+  conversation?: ConversationMessage[],
+  permissionMode?: string
 ): AsyncGenerator<AgentMessage> {
   const sessionId = nanoid(10);
   const abortController = new AbortController();
@@ -210,6 +223,8 @@ export async function* runClaude(
   const sentTextHashes = new Set<string>();
   const sentToolIds = new Set<string>();
 
+  const effectivePermMode = (permissionMode || 'bypassPermissions') as 'bypassPermissions' | 'default' | 'acceptEdits' | 'plan' | 'dontAsk';
+
   const queryOptions: Options = {
     tools: { type: 'preset', preset: 'claude_code' },
     allowedTools: [
@@ -217,8 +232,8 @@ export async function* runClaude(
       'WebSearch', 'WebFetch', 'Task', 'TodoWrite',
     ],
     settingSources: ['user', 'project'],
-    permissionMode: 'bypassPermissions',
-    allowDangerouslySkipPermissions: true,
+    permissionMode: effectivePermMode,
+    allowDangerouslySkipPermissions: effectivePermMode === 'bypassPermissions',
     abortController,
     env,
     model: config.model,
@@ -278,6 +293,31 @@ export async function* runClaude(
               isError: !!(block as Record<string, unknown>).is_error,
             };
           }
+        }
+      }
+
+      // Process system messages (init, status)
+      if (msg.type === 'system') {
+        const sysMsg = msg as Record<string, unknown>;
+        if (sysMsg.subtype === 'init') {
+          const commands = sysMsg.slash_commands as string[] | undefined;
+          if (commands) {
+            cachedClaudeCommands = commands.map(name => ({
+              name,
+              description: '',
+              argumentHint: '',
+            }));
+          }
+          yield {
+            type: 'init',
+            permissionMode: sysMsg.permissionMode as string | undefined,
+            slashCommands: commands,
+          };
+        } else if (sysMsg.subtype === 'status' && sysMsg.permissionMode) {
+          yield {
+            type: 'status',
+            permissionMode: sysMsg.permissionMode as string,
+          };
         }
       }
 

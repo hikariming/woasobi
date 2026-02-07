@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { open } from "@tauri-apps/plugin-dialog";
 import {
   Plus, Zap, Wrench, Puzzle, Settings, Search,
   ChevronDown, ArrowLeft, FolderOpen, Trash2,
@@ -33,8 +34,6 @@ export function Sidebar() {
   const { secondaryPanel, setSecondaryPanel, setSettingsOpen } = useUIStore();
   const { projects, loading: projectsLoading, discover, addProject, removeProject, togglePin } = useProjectStore();
   const [searchQuery, setSearchQuery] = useState("");
-  const [addingProject, setAddingProject] = useState(false);
-  const [newProjectPath, setNewProjectPath] = useState("");
   const [contextMenu, setContextMenu] = useState<{ type: "thread" | "project"; id: string; x: number; y: number } | null>(null);
 
   // Close context menu on click outside
@@ -67,12 +66,16 @@ export function Sidebar() {
     return <SecondaryPanel type={secondaryPanel} onBack={() => setSecondaryPanel(null)} />;
   }
 
-  const handleAddProject = async () => {
-    if (!newProjectPath.trim()) return;
+  const handlePickProject = async () => {
     try {
-      await addProject(newProjectPath.trim());
-      setNewProjectPath("");
-      setAddingProject(false);
+      const selected = await open({
+        directory: true,
+        multiple: false,
+        title: "Select project folder",
+      });
+      if (typeof selected === "string" && selected.trim()) {
+        await addProject(selected.trim());
+      }
     } catch {
       // Show error?
     }
@@ -127,7 +130,7 @@ export function Sidebar() {
             <FolderSearch className="size-3.5" />
           </button>
           <button
-            onClick={() => setAddingProject(!addingProject)}
+            onClick={handlePickProject}
             title="Add project"
             className="text-muted-foreground hover:text-foreground p-0.5 rounded"
           >
@@ -135,27 +138,6 @@ export function Sidebar() {
           </button>
         </div>
       </div>
-
-      {/* Add project input */}
-      {addingProject && (
-        <div className="px-3 pb-1 flex gap-1">
-          <input
-            type="text"
-            placeholder="/path/to/project"
-            value={newProjectPath}
-            onChange={(e) => setNewProjectPath(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && handleAddProject()}
-            className="border-border bg-muted/50 focus:border-primary/50 flex-1 rounded-md border px-2 py-1 text-xs outline-none"
-            autoFocus
-          />
-          <button
-            onClick={handleAddProject}
-            className="text-primary text-xs px-1.5 hover:underline"
-          >
-            Add
-          </button>
-        </div>
-      )}
 
       {/* Loading */}
       {projectsLoading && (
@@ -283,11 +265,10 @@ export function Sidebar() {
       )}
 
       {/* Footer */}
-      <div className="border-border flex items-center justify-between border-t p-3">
+      <div className="border-border flex items-center border-t p-3">
         <button onClick={() => setSettingsOpen(true)} className="text-muted-foreground hover:text-foreground flex items-center gap-2 text-sm">
           <Settings className="size-4" /> Settings
         </button>
-        <button className="bg-primary text-primary-foreground rounded-md px-3 py-1 text-xs font-medium">Upgrade</button>
       </div>
     </div>
   );

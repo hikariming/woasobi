@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { nanoid } from 'nanoid';
-import { runClaude, stopClaudeSession } from '../agents/claude.js';
+import { runClaude, stopClaudeSession, getCachedClaudeCommands } from '../agents/claude.js';
 import { runCodex, stopCodexSession } from '../agents/codex.js';
 import { createSSEStream, SSE_HEADERS } from '../utils/sse.js';
 import type { AgentRequest, AgentMessage } from '../agents/types.js';
@@ -85,6 +85,44 @@ async function* persistingWrapper(
   }
 }
 
+// Default Claude commands before any session provides live data
+const DEFAULT_CLAUDE_COMMANDS = [
+  { name: 'compact', description: 'Compact conversation context', argumentHint: '' },
+  { name: 'review', description: 'Code review', argumentHint: '' },
+  { name: 'init', description: 'Initialize a CLAUDE.md file', argumentHint: '' },
+  { name: 'login', description: 'Log in to your account', argumentHint: '' },
+  { name: 'logout', description: 'Log out', argumentHint: '' },
+  { name: 'doctor', description: 'Diagnose issues', argumentHint: '' },
+  { name: 'memory', description: 'Edit CLAUDE.md', argumentHint: '' },
+  { name: 'config', description: 'Edit config', argumentHint: '' },
+  { name: 'cost', description: 'Show cost information', argumentHint: '' },
+  { name: 'permissions', description: 'View and manage permissions', argumentHint: '' },
+];
+
+const CODEX_COMMANDS = [
+  { name: 'help', description: 'Show available commands', argumentHint: '' },
+  { name: 'model', description: 'Change the model', argumentHint: '<model-name>' },
+  { name: 'approval', description: 'Change approval mode', argumentHint: '<mode>' },
+  { name: 'undo', description: 'Undo last file changes', argumentHint: '' },
+  { name: 'clear', description: 'Clear conversation history', argumentHint: '' },
+  { name: 'history', description: 'Show conversation history', argumentHint: '' },
+  { name: 'compact', description: 'Compact conversation context', argumentHint: '' },
+];
+
+// Get available slash commands for a provider
+agent.get('/commands/:provider', (c) => {
+  const provider = c.req.param('provider');
+  if (provider === 'codex') {
+    return c.json(CODEX_COMMANDS);
+  }
+  // Claude: use cached from live session, or defaults
+  const cached = getCachedClaudeCommands();
+  if (cached && cached.length > 0) {
+    return c.json(cached);
+  }
+  return c.json(DEFAULT_CLAUDE_COMMANDS);
+});
+
 // Direct execution
 agent.post('/', async (c) => {
   const body = await c.req.json<AgentRequest>();
@@ -113,7 +151,7 @@ agent.post('/', async (c) => {
   if (provider === 'codex') {
     generator = runCodex(body.prompt, config);
   } else {
-    generator = runClaude(body.prompt, config, body.conversation);
+    generator = runClaude(body.prompt, config, body.conversation, body.permissionMode);
   }
 
   // Wrap with persistence if threadId provided

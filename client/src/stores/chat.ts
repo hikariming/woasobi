@@ -133,6 +133,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     const uiStore = useUIStore.getState();
     const provider = uiStore.activeMode === "codex" ? "codex" as const : "claude" as const;
     const modelConfig = settings.getModelConfig(uiStore.activeMode);
+    const permissionMode = uiStore.permissionMode;
 
     // Build conversation history from thread messages
     const threadMsgs = get().messages[activeThreadId] || [];
@@ -154,12 +155,36 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         signal: abortController.signal,
         threadId: activeThreadId,
         messageId,
+        permissionMode,
       });
 
       await parseSSEStream(response, (msg) => {
         switch (msg.type) {
           case "session":
             set({ currentSessionId: msg.sessionId || null });
+            break;
+
+          case "init": {
+            const uiActions = useUIStore.getState();
+            if (msg.permissionMode) {
+              uiActions.setPermissionMode(msg.permissionMode);
+            }
+            if (msg.slashCommands && msg.slashCommands.length > 0) {
+              uiActions.setSlashCommands(
+                msg.slashCommands.map((name: string) => ({
+                  name,
+                  description: "",
+                  argumentHint: "",
+                }))
+              );
+            }
+            break;
+          }
+
+          case "status":
+            if (msg.permissionMode) {
+              useUIStore.getState().setPermissionMode(msg.permissionMode);
+            }
             break;
 
           case "text":

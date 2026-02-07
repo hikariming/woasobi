@@ -1,5 +1,7 @@
 export type AgentMessageType =
   | 'session'
+  | 'init'
+  | 'status'
   | 'text'
   | 'tool_use'
   | 'tool_result'
@@ -24,6 +26,9 @@ export interface AgentMessage {
   duration?: number;
   // error fields
   message?: string;
+  // init/status fields
+  permissionMode?: string;
+  slashCommands?: string[];
 }
 
 export interface AgentConfig {
@@ -49,4 +54,5 @@ export interface AgentRequest {
   conversation?: ConversationMessage[];
   threadId?: string;
   messageId?: string;
+  permissionMode?: string;
 }

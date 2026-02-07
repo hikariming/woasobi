@@ -41,6 +41,7 @@ export interface Message {
   cost?: number;
   duration?: number;
   isError?: boolean;
+  attachedFiles?: string[];
 }
 
 export type FileStatus = "modified" | "added" | "deleted";
