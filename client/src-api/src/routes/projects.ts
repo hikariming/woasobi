@@ -370,7 +370,14 @@ projects.post('/:id/git/commit', async (c) => {
     });
     return c.json({ ok: true, output: stdout.trim() });
   } catch (error) {
-    const msg = error instanceof Error ? (error as Error & { stderr?: string }).stderr || error.message : String(error);
+    let msg: string;
+    if (error instanceof Error) {
+      const e = error as Error & { stderr?: string; stdout?: string };
+      // git may output the real error to stderr or stdout
+      msg = [e.stderr, e.stdout].filter(Boolean).join('\n').trim() || e.message;
+    } else {
+      msg = String(error);
+    }
     return c.json({ error: msg }, 500);
   }
 });
@@ -420,7 +427,13 @@ projects.post('/:id/git/checkout', async (c) => {
     });
     return c.json({ ok: true, branch: branch.trim() });
   } catch (error) {
-    const msg = error instanceof Error ? (error as Error & { stderr?: string }).stderr || error.message : String(error);
+    let msg: string;
+    if (error instanceof Error) {
+      const e = error as Error & { stderr?: string; stdout?: string };
+      msg = [e.stderr, e.stdout].filter(Boolean).join('\n').trim() || e.message;
+    } else {
+      msg = String(error);
+    }
     return c.json({ error: msg }, 500);
   }
 });

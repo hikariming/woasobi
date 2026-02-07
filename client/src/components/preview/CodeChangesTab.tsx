@@ -1,10 +1,12 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { ChevronDown, ChevronRight, GitCommit, Loader2, MessageSquare } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { usePreviewStore } from "@/stores/preview";
 import { useUIStore } from "@/stores/ui";
 import { ChangeFileItem } from "./changes/ChangeFileItem";
 import { ChangeHeader } from "./changes/ChangeHeader";
+
+const GIT_POLL_INTERVAL = 3000;
 
 export function CodeChangesTab() {
   const {
@@ -16,6 +18,7 @@ export function CodeChangesTab() {
     collapsedGroups,
     expandedFiles,
     selectedFile,
+    activeProjectId,
     setChangesFilter,
     toggleChangeGroup,
     toggleFileExpanded,
@@ -24,9 +27,19 @@ export function CodeChangesTab() {
     selectFile,
     setCommitMessage,
     commitStaged,
+    loadGitStatus,
   } = usePreviewStore();
   const { togglePreview } = useUIStore();
   const [commitError, setCommitError] = useState<string | null>(null);
+
+  // Poll git status while this tab is visible
+  useEffect(() => {
+    if (!activeProjectId) return;
+    const timer = setInterval(() => {
+      loadGitStatus(activeProjectId);
+    }, GIT_POLL_INTERVAL);
+    return () => clearInterval(timer);
+  }, [activeProjectId, loadGitStatus]);
 
   const filteredChanges = allChanges.filter((change) => {
     if (changesFilter === "staged") return change.staged;
@@ -73,7 +86,13 @@ export function CodeChangesTab() {
   return (
     <div className="h-full flex flex-col">
       <div className="flex-1 overflow-y-auto p-3 space-y-3">
-        <ChangeHeader filter={changesFilter} count={filteredChanges.length} onFilter={setChangesFilter} />
+        <ChangeHeader
+          filter={changesFilter}
+          count={filteredChanges.length}
+          loading={changesLoading}
+          onFilter={setChangesFilter}
+          onRefresh={() => activeProjectId && loadGitStatus(activeProjectId)}
+        />
 
         <section className="space-y-2">
           <button

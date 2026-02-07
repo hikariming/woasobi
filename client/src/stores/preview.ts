@@ -121,6 +121,8 @@ interface PreviewStore {
   clearTouchedFiles: () => void;
 }
 
+let _gitStatusPending = false;
+
 export const usePreviewStore = create<PreviewStore>((set, get) => ({
   // Active project context
   activeProjectId: null,
@@ -237,12 +239,18 @@ export const usePreviewStore = create<PreviewStore>((set, get) => ({
       };
     }),
   loadGitStatus: async (projectId) => {
-    set({ changesLoading: true });
+    // Guard against concurrent requests (polling overlap)
+    if (_gitStatusPending) return;
+    _gitStatusPending = true;
+    // Only show loading spinner on first load
+    if (get().allChanges.length === 0) set({ changesLoading: true });
     try {
       const changes = await fetchGitStatus(projectId);
       set({ allChanges: changes, changesLoading: false });
     } catch {
-      set({ allChanges: [], changesLoading: false });
+      set({ changesLoading: false });
+    } finally {
+      _gitStatusPending = false;
     }
   },
   setCommitMessage: (msg) => set({ commitMessage: msg }),
