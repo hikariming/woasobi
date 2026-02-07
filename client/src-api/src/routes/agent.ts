@@ -4,7 +4,7 @@ import { runClaude, stopClaudeSession, getCachedClaudeCommands } from '../agents
 import { runCodex, stopCodexSession } from '../agents/codex.js';
 import { createSSEStream, SSE_HEADERS } from '../utils/sse.js';
 import type { AgentRequest, AgentMessage } from '../agents/types.js';
-import { appendMessage, updateThreadAfterMessage, type StoredMessage } from '../storage/index.js';
+import { appendMessage, updateThreadAfterMessage, type StoredMessage, type StoredMessagePart } from '../storage/index.js';
 
 const agent = new Hono();
 
@@ -30,6 +30,7 @@ async function* persistingWrapper(
   // Accumulate assistant response
   let fullText = '';
   const toolCalls: StoredMessage['toolCalls'] = [];
+  const parts: StoredMessagePart[] = [];
   let cost: number | undefined;
   let duration: number | undefined;
   let hasError = false;
@@ -38,21 +39,38 @@ async function* persistingWrapper(
     // Accumulate while passing through
     switch (msg.type) {
       case 'text':
-        if (msg.content) fullText += msg.content;
+        if (msg.content) {
+          fullText += msg.content;
+          // Append to last text part or create new one
+          const lastPart = parts[parts.length - 1];
+          if (lastPart && lastPart.type === 'text') {
+            lastPart.content += msg.content;
+          } else {
+            parts.push({ type: 'text', content: msg.content });
+          }
+        }
         break;
       case 'tool_use':
         if (msg.name && msg.id) {
-          toolCalls.push({
+          const tc = {
             id: msg.id,
             name: msg.name,
             args: (msg.input as Record<string, unknown>) || {},
-          });
+          };
+          toolCalls.push(tc);
+          parts.push({ type: 'tool_use', ...tc });
         }
         break;
       case 'tool_result':
         if (msg.toolUseId) {
           const tc = toolCalls.find((t) => t.id === msg.toolUseId);
           if (tc) tc.output = msg.output;
+          // Also update the part
+          const part = parts.find((p) => p.type === 'tool_use' && p.id === msg.toolUseId);
+          if (part && part.type === 'tool_use') {
+            part.output = msg.output;
+            part.isError = msg.isError;
+          }
         }
         break;
       case 'result':
@@ -61,7 +79,16 @@ async function* persistingWrapper(
         break;
       case 'error':
         hasError = true;
-        if (msg.message) fullText += fullText ? `\n\nError: ${msg.message}` : `Error: ${msg.message}`;
+        if (msg.message) {
+          const errText = fullText ? `\n\nError: ${msg.message}` : `Error: ${msg.message}`;
+          fullText += errText;
+          const lastPart = parts[parts.length - 1];
+          if (lastPart && lastPart.type === 'text') {
+            lastPart.content += errText;
+          } else {
+            parts.push({ type: 'text', content: errText });
+          }
+        }
         break;
     }
 
@@ -74,6 +101,7 @@ async function* persistingWrapper(
         role: 'assistant',
         content: fullText,
         toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+        parts: parts.length > 0 ? parts : undefined,
         timestamp: new Date().toISOString(),
         cost,
         duration,

@@ -34,6 +34,10 @@ export interface StoredThread {
   sourcePath?: string; // Path to original CLI session file (imported)
 }
 
+export type StoredMessagePart =
+  | { type: 'text'; content: string }
+  | { type: 'tool_use'; id: string; name: string; args: Record<string, unknown>; output?: string; isError?: boolean };
+
 export interface StoredMessage {
   id: string;
   role: 'user' | 'assistant';
@@ -44,6 +48,8 @@ export interface StoredMessage {
     args: Record<string, unknown>;
     output?: string;
   }>;
+  /** Ordered parts preserving text ↔ tool interleaving */
+  parts?: StoredMessagePart[];
   timestamp: string;
   cost?: number;
   duration?: number;

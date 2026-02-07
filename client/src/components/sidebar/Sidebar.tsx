@@ -2,39 +2,16 @@ import { useState, useEffect } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
   Plus, Zap, Wrench, Puzzle, Settings, Search,
-  ChevronDown, ArrowLeft, FolderOpen, Trash2,
-  FileCode, Bug, RefreshCw, FlaskConical, FileText,
-  Image, Globe, Terminal, GitBranch, Plug, Loader2, Circle,
-  FolderSearch, FolderPlus, Pin, PinOff,
+  Loader2, FolderSearch, FolderPlus, Trash2, Pin, PinOff,
 } from "lucide-react";
-import { cn } from "@/lib/utils";
 import { useChatStore, useUIStore, useProjectStore } from "@/stores";
-import type { ThreadRuntimeStatus } from "@/stores/chat";
-import { mockSkills } from "@/mocks/skills";
-import { mockTools } from "@/mocks/tools";
-import type { Project, Thread } from "@/types";
-
-const skillIconMap: Record<string, React.ElementType> = {
-  FileCode, Search, Bug, RefreshCw, FlaskConical, FileText, Image, Globe,
-};
-const toolIconMap: Record<string, React.ElementType> = {
-  Terminal, FolderOpen, GitBranch, Plug,
-};
-
-function formatRelativeTime(iso: string): string {
-  const diff = Date.now() - new Date(iso).getTime();
-  if (diff < 60_000) return "now";
-  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m`;
-  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h`;
-  if (diff < 604_800_000) return `${Math.floor(diff / 86_400_000)}d`;
-  return `${Math.floor(diff / 604_800_000)}w`;
-}
+import { ProjectGroup } from "./ProjectGroup";
+import { SecondaryPanel } from "./SecondaryPanel";
 
 export function Sidebar() {
   const {
     threads,
     activeThreadId,
-    isStreaming,
     threadRuntimeStatus,
     setActiveThread,
     createThread,
@@ -69,7 +46,6 @@ export function Sidebar() {
     .filter((t) => !projects.some((p) => p.id === t.projectId))
     .filter((t) => t.title.toLowerCase().includes(searchQuery.toLowerCase()));
 
-  // Find the first project to use as default for new threads
   const defaultProject = projects[0];
 
   if (secondaryPanel) {
@@ -87,7 +63,7 @@ export function Sidebar() {
         await addProject(selected.trim());
       }
     } catch {
-      // Show error?
+      // ignore
     }
   };
 
@@ -180,7 +156,6 @@ export function Sidebar() {
             project={project}
             threads={items}
             activeId={activeThreadId}
-            isStreaming={isStreaming}
             threadRuntimeStatus={threadRuntimeStatus}
             onSelect={(id) => setActiveThread(id)}
             onNewThread={(pid) => createThread(pid)}
@@ -195,7 +170,6 @@ export function Sidebar() {
             project={{ id: "__orphan", name: "Other", path: "", source: "manual", addedAt: "" }}
             threads={orphanThreads}
             activeId={activeThreadId}
-            isStreaming={isStreaming}
             threadRuntimeStatus={threadRuntimeStatus}
             onSelect={(id) => setActiveThread(id)}
             onNewThread={() => {}}
@@ -209,10 +183,7 @@ export function Sidebar() {
           <div className="text-muted-foreground py-4 text-center text-xs">
             No projects yet.
             <br />
-            <button
-              onClick={() => discover()}
-              className="text-primary mt-1 hover:underline"
-            >
+            <button onClick={() => discover()} className="text-primary mt-1 hover:underline">
               Discover from CLI
             </button>
           </div>
@@ -236,208 +207,56 @@ export function Sidebar() {
               <Trash2 className="size-3" /> Delete
             </button>
           )}
-          {contextMenu.type === "project" && (() => {
-            const proj = projects.find((p) => p.id === contextMenu.id);
-            const isPinned = proj?.pinned;
-            const hasThreads = threads.some((t) => t.projectId === contextMenu.id);
-            return (
-              <>
-                <button
-                  onClick={() => {
-                    togglePin(contextMenu.id);
-                    setContextMenu(null);
-                  }}
-                  className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-xs text-foreground hover:bg-accent"
-                >
-                  {isPinned ? <PinOff className="size-3" /> : <Pin className="size-3" />}
-                  {isPinned ? "Unpin" : "Pin to Top"}
-                </button>
-                {hasThreads && (
+          {contextMenu.type === "project" &&
+            (() => {
+              const proj = projects.find((p) => p.id === contextMenu.id);
+              const isPinned = proj?.pinned;
+              const hasThreads = threads.some((t) => t.projectId === contextMenu.id);
+              return (
+                <>
                   <button
                     onClick={() => {
-                      clearProjectThreads(contextMenu.id);
+                      togglePin(contextMenu.id);
+                      setContextMenu(null);
+                    }}
+                    className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-xs text-foreground hover:bg-accent"
+                  >
+                    {isPinned ? <PinOff className="size-3" /> : <Pin className="size-3" />}
+                    {isPinned ? "Unpin" : "Pin to Top"}
+                  </button>
+                  {hasThreads && (
+                    <button
+                      onClick={() => {
+                        clearProjectThreads(contextMenu.id);
+                        setContextMenu(null);
+                      }}
+                      className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-xs text-destructive hover:bg-accent"
+                    >
+                      <Trash2 className="size-3" /> Clear All Threads
+                    </button>
+                  )}
+                  <button
+                    onClick={() => {
+                      removeProject(contextMenu.id);
                       setContextMenu(null);
                     }}
                     className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-xs text-destructive hover:bg-accent"
                   >
-                    <Trash2 className="size-3" /> Clear All Threads
+                    <Trash2 className="size-3" /> Remove
                   </button>
-                )}
-                <button
-                  onClick={() => {
-                    removeProject(contextMenu.id);
-                    setContextMenu(null);
-                  }}
-                  className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-xs text-destructive hover:bg-accent"
-                >
-                  <Trash2 className="size-3" /> Remove
-                </button>
-              </>
-            );
-          })()}
+                </>
+              );
+            })()}
         </div>
       )}
 
       {/* Footer */}
       <div className="border-border flex items-center border-t p-3">
-        <button onClick={() => setSettingsOpen(true)} className="text-muted-foreground hover:text-foreground flex items-center gap-2 text-sm">
-          <Settings className="size-4" /> Settings
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function ProjectGroup({ project, threads, activeId, isStreaming, threadRuntimeStatus, onSelect, onContextMenu, onNewThread }: {
-  project: Project;
-  threads: Thread[];
-  activeId: string | null;
-  isStreaming: boolean;
-  threadRuntimeStatus: Record<string, ThreadRuntimeStatus>;
-  onSelect: (id: string) => void;
-  onContextMenu: (e: React.MouseEvent, type: "thread" | "project", id: string) => void;
-  onNewThread: (projectId: string) => void;
-}) {
-  const [open, setOpen] = useState(true);
-  return (
-    <div className="mb-1">
-      <div className="flex items-center">
         <button
-          onClick={() => setOpen(!open)}
-          onContextMenu={(e) => project.id !== "__orphan" && onContextMenu(e, "project", project.id)}
-          className="text-muted-foreground hover:text-foreground flex flex-1 items-center gap-1.5 px-1.5 py-1 text-xs font-medium"
+          onClick={() => setSettingsOpen(true)}
+          className="text-muted-foreground hover:text-foreground flex items-center gap-2 text-sm"
         >
-          <ChevronDown className={cn("size-3 transition-transform", !open && "-rotate-90")} />
-          <FolderOpen className="size-3" />
-          <span className="truncate">{project.name}</span>
-          {project.pinned && (
-            <Pin className="size-2.5 text-primary shrink-0" />
-          )}
-          {project.source && project.source !== "manual" && (
-            <span className="ml-1 text-[9px] text-muted-foreground/60">
-              {project.source === 'claude+codex' ? 'CC+CX' : project.source === 'claude' ? 'CC' : 'CX'}
-            </span>
-          )}
-        </button>
-        {project.id !== "__orphan" && (
-          <button
-            onClick={() => onNewThread(project.id)}
-            title="New thread in this project"
-            className="text-muted-foreground hover:text-foreground p-0.5 mr-1 rounded opacity-0 group-hover:opacity-100 hover:!opacity-100"
-            style={{ opacity: undefined }}
-            onMouseEnter={(e) => (e.currentTarget.style.opacity = '1')}
-            onMouseLeave={(e) => (e.currentTarget.style.opacity = '')}
-          >
-            <Plus className="size-3" />
-          </button>
-        )}
-      </div>
-      {open && (
-        <div className="ml-2 space-y-0.5">
-          {threads.length === 0 && (
-            <div className="text-muted-foreground/50 px-2 py-1 text-[10px] italic">No threads</div>
-          )}
-          {threads.map((t) => (
-            (() => {
-              const isActiveThread = t.id === activeId;
-              const status = isActiveThread
-                ? (isStreaming ? "running" : threadRuntimeStatus[t.id])
-                : undefined;
-              return (
-            <button
-              key={t.id}
-              onClick={() => onSelect(t.id)}
-              onContextMenu={(e) => onContextMenu(e, "thread", t.id)}
-              className={cn(
-                "flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-xs transition-colors",
-                t.id === activeId ? "bg-accent text-accent-foreground" : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
-              )}
-            >
-              <span className="truncate pr-2">{t.title}</span>
-              <span className="flex items-center gap-1 shrink-0">
-                {status && (
-                  <ThreadStatusIndicator status={status} />
-                )}
-                {t.sourcePath && (
-                  <span className="text-[9px] text-muted-foreground/50">
-                    {t.mode === 'codex' ? 'CX' : 'CC'}
-                  </span>
-                )}
-                <span className="text-muted-foreground text-[10px]">
-                  {formatRelativeTime(t.updatedAt)}
-                </span>
-              </span>
-            </button>
-              );
-            })()
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function ThreadStatusIndicator({ status }: { status: ThreadRuntimeStatus }) {
-  if (status === "running") {
-    return (
-      <span title="Running" aria-label="Running">
-        <Loader2 className="size-3.5 animate-spin text-sky-500" />
-      </span>
-    );
-  }
-  if (status === "awaiting-permission") {
-    return (
-      <span title="Waiting for permission" aria-label="Waiting for permission">
-        <Circle className="size-2.5 fill-amber-400 text-amber-400" />
-      </span>
-    );
-  }
-  return (
-    <span title="Completed" aria-label="Completed">
-      <Circle className="size-2.5 fill-emerald-400 text-emerald-400" />
-    </span>
-  );
-}
-
-function SecondaryPanel({ type, onBack }: { type: "skills" | "tools" | "automations"; onBack: () => void }) {
-  const title = type === "skills" ? "Skills" : type === "tools" ? "Tools" : "Automations";
-  const list = type === "skills" ? mockSkills : type === "tools" ? mockTools : [];
-  const iconMap = type === "skills" ? skillIconMap : toolIconMap;
-
-  return (
-    <div className="flex h-full flex-col">
-      <div className="border-border flex items-center gap-2 border-b p-3">
-        <button onClick={onBack} className="text-muted-foreground hover:text-foreground"><ArrowLeft className="size-4" /></button>
-        <span className="text-sm font-semibold">{title}</span>
-      </div>
-      <div className="p-3 pb-2">
-        <input type="text" placeholder={`Search ${type}...`} className="border-border bg-muted/50 w-full rounded-md border px-2 py-1.5 text-xs outline-none" />
-      </div>
-      <div className="scrollbar-thin flex-1 overflow-y-auto px-3">
-        {list.length === 0 ? (
-          <div className="text-muted-foreground py-8 text-center text-xs">
-            No {type} configured yet.
-            <br />
-            <button className="text-primary mt-2 hover:underline">+ Create</button>
-          </div>
-        ) : (
-          list.map((item) => {
-            const Icon = iconMap[item.icon] || Puzzle;
-            return (
-              <button key={item.id} className="hover:bg-accent flex w-full items-center gap-3 rounded-md px-2 py-2 text-left transition-colors">
-                <Icon className="text-muted-foreground size-4 shrink-0" />
-                <div className="min-w-0">
-                  <div className="text-foreground text-sm">{item.name}</div>
-                  <div className="text-muted-foreground truncate text-xs">{item.description}</div>
-                </div>
-              </button>
-            );
-          })
-        )}
-      </div>
-      <div className="border-border border-t p-3">
-        <button className="text-primary flex items-center gap-1 text-sm hover:underline">
-          <Plus className="size-3.5" /> {type === "skills" ? "Create Custom Skill" : type === "tools" ? "Add MCP Tool" : "Create Automation"}
+          <Settings className="size-4" /> Settings
         </button>
       </div>
     </div>

@@ -31,12 +31,19 @@ export interface ToolCall {
   output?: string;
 }
 
+/** Ordered content part — preserves interleaving of text and tool calls */
+export type MessagePart =
+  | { type: 'text'; content: string }
+  | { type: 'tool_use'; id: string; name: string; args: Record<string, unknown>; output?: string; isError?: boolean };
+
 export interface Message {
   id: string;
   threadId: string;
   role: MessageRole;
   content: string;
   toolCalls?: ToolCall[];
+  /** Ordered parts preserving text ↔ tool interleaving (preferred over content+toolCalls) */
+  parts?: MessagePart[];
   timestamp: string;
   cost?: number;
   duration?: number;

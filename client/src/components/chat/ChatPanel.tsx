@@ -7,7 +7,7 @@ import { MessageBubble } from './MessageBubble';
 import { ChatInput } from './ChatInput';
 
 export function ChatPanel() {
-  const { activeThreadId, messages, threads, streamingText, isStreaming } = useChatStore();
+  const { activeThreadId, messages, threads, streamingText, streamingParts, isStreaming } = useChatStore();
   const { sidebarOpen, toggleSidebar, previewOpen, togglePreview } = useUIStore();
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -77,6 +77,7 @@ export function ChatPanel() {
               threadId: activeThreadId || '',
               role: 'assistant',
               content: streamingText,
+              parts: streamingParts.length > 0 ? streamingParts : undefined,
               timestamp: '',
             }}
             isStreaming

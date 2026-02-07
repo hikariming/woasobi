@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { nanoid } from "nanoid";
-import type { Message, Thread, ToolCall } from "@/types";
+import type { Message, MessagePart, Thread, ToolCall } from "@/types";
 import { sendAgentRequest, parseSSEStream, stopAgent } from "@/lib/api/agent";
 import {
   fetchThreads,
@@ -38,6 +38,7 @@ interface ChatStore {
   messages: Record<string, Message[]>;
   streamingText: string | null;
   streamingToolCalls: ToolCall[];
+  streamingParts: MessagePart[];
   isStreaming: boolean;
   currentSessionId: string | null;
   abortController: AbortController | null;
@@ -52,6 +53,7 @@ interface ChatStore {
   deleteThread: (id: string) => Promise<void>;
   renameThread: (id: string, title: string) => Promise<void>;
   clearProjectThreads: (projectId: string) => Promise<void>;
+  clearThreadStatus: (threadId: string) => void;
 }
 
 export const useChatStore = create<ChatStore>((set, get) => ({
@@ -60,12 +62,20 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   messages: {},
   streamingText: null,
   streamingToolCalls: [],
+  streamingParts: [],
   isStreaming: false,
   currentSessionId: null,
   abortController: null,
   threadRuntimeStatus: {},
   threadsLoading: false,
   messagesLoading: false,
+
+  clearThreadStatus: (threadId) => {
+    set((s) => {
+      const { [threadId]: _, ...rest } = s.threadRuntimeStatus;
+      return { threadRuntimeStatus: rest };
+    });
+  },
 
   loadThreads: async (projectId?) => {
     set({ threadsLoading: true });
@@ -145,6 +155,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       isStreaming: true,
       streamingText: "",
       streamingToolCalls: [],
+      streamingParts: [],
       currentSessionId: null,
       abortController,
       threadRuntimeStatus: {
@@ -169,6 +180,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 
     let fullText = "";
     const toolCalls: ToolCall[] = [];
+    const parts: MessagePart[] = [];
     let cost: number | undefined;
     let duration: number | undefined;
 
@@ -227,7 +239,14 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           case "text":
             if (msg.content) {
               fullText += msg.content;
-              set({ streamingText: fullText });
+              // Append to last text part or create new one
+              const lastTextPart = parts[parts.length - 1];
+              if (lastTextPart && lastTextPart.type === "text") {
+                lastTextPart.content += msg.content;
+              } else {
+                parts.push({ type: "text", content: msg.content });
+              }
+              set({ streamingText: fullText, streamingParts: [...parts] });
               // Detect HTML artifacts in streamed text
               preview.extractArtifactsFromText(fullText);
             }
@@ -247,7 +266,8 @@ export const useChatStore = create<ChatStore>((set, get) => ({
                 args: (msg.input as Record<string, unknown>) || {},
               };
               toolCalls.push(tc);
-              set({ streamingToolCalls: [...toolCalls] });
+              parts.push({ type: "tool_use", id: msg.id, name: msg.name, args: tc.args });
+              set({ streamingToolCalls: [...toolCalls], streamingParts: [...parts] });
 
               // Route to Terminal tab
               const input = (msg.input as Record<string, unknown>) || {};
@@ -287,7 +307,13 @@ export const useChatStore = create<ChatStore>((set, get) => ({
               const tc = toolCalls.find((t) => t.id === msg.toolUseId);
               if (tc) {
                 tc.output = msg.output;
-                set({ streamingToolCalls: [...toolCalls] });
+                // Also update the matching part
+                const toolPart = parts.find((p) => p.type === "tool_use" && p.id === msg.toolUseId);
+                if (toolPart && toolPart.type === "tool_use") {
+                  toolPart.output = msg.output;
+                  toolPart.isError = msg.isError;
+                }
+                set({ streamingToolCalls: [...toolCalls], streamingParts: [...parts] });
 
                 // Route Bash output to Terminal tab
                 if (tc.name === "Bash") {
@@ -312,11 +338,19 @@ export const useChatStore = create<ChatStore>((set, get) => ({
             duration = msg.duration;
             break;
 
-          case "error":
+          case "error": {
             const errorContent = msg.message || "Unknown error";
-            fullText += fullText ? `\n\n**Error:** ${errorContent}` : `**Error:** ${errorContent}`;
-            set({ streamingText: fullText });
+            const errText = fullText ? `\n\n**Error:** ${errorContent}` : `**Error:** ${errorContent}`;
+            fullText += errText;
+            const lastErrPart = parts[parts.length - 1];
+            if (lastErrPart && lastErrPart.type === "text") {
+              lastErrPart.content += errText;
+            } else {
+              parts.push({ type: "text", content: errText });
+            }
+            set({ streamingText: fullText, streamingParts: [...parts] });
             break;
+          }
 
           case "done":
             break;
@@ -350,6 +384,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           role: "assistant",
           content: fullText,
           toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+          parts: parts.length > 0 ? parts : undefined,
           timestamp: new Date().toISOString(),
           cost,
           duration,
@@ -360,6 +395,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           isStreaming: false,
           streamingText: null,
           streamingToolCalls: [],
+          streamingParts: [],
           currentSessionId: null,
           abortController: null,
           threadRuntimeStatus: {
@@ -375,6 +411,12 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           },
         }));
 
+        // Auto-clear completed status after 5s (historical threads don't need indicators)
+        setTimeout(() => {
+          const current = get().threadRuntimeStatus[activeThreadId];
+          if (current === "completed") get().clearThreadStatus(activeThreadId);
+        }, 5000);
+
         // Update thread title from first user message if it's still "New Thread"
         const thread = get().threads.find((t) => t.id === activeThreadId);
         if (thread && thread.title === "New Thread") {
@@ -389,6 +431,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           isStreaming: false,
           streamingText: null,
           streamingToolCalls: [],
+          streamingParts: [],
           currentSessionId: null,
           abortController: null,
           threadRuntimeStatus: {
@@ -396,6 +439,12 @@ export const useChatStore = create<ChatStore>((set, get) => ({
             [activeThreadId]: "completed",
           },
         });
+
+        // Auto-clear completed status after 5s
+        setTimeout(() => {
+          const current = get().threadRuntimeStatus[activeThreadId];
+          if (current === "completed") get().clearThreadStatus(activeThreadId);
+        }, 5000);
       }
     }
   },
@@ -412,6 +461,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       isStreaming: false,
       streamingText: null,
       streamingToolCalls: [],
+      streamingParts: [],
       currentSessionId: null,
       abortController: null,
       ...(activeThreadId
@@ -423,6 +473,14 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           }
         : {}),
     });
+
+    // Auto-clear completed status after 5s
+    if (activeThreadId) {
+      setTimeout(() => {
+        const current = get().threadRuntimeStatus[activeThreadId];
+        if (current === "completed") get().clearThreadStatus(activeThreadId);
+      }, 5000);
+    }
   },
 
   deleteThread: async (id) => {
