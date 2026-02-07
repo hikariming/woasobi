@@ -39,10 +39,10 @@ export function ChatInput() {
     }
   };
 
-  const modes: Array<{ value: 'auto' | 'ask' | 'manual'; label: string }> = [
-    { value: 'auto', label: 'Auto' },
-    { value: 'ask', label: 'Ask' },
-    { value: 'manual', label: 'Manual' },
+  const modes: Array<{ value: 'claudeCode' | 'codex' | 'woAgent'; label: string; disabled?: boolean }> = [
+    { value: 'claudeCode', label: 'ClaudeCode' },
+    { value: 'codex', label: 'Codex' },
+    { value: 'woAgent', label: 'WoAgent', disabled: true },
   ];
 
   return (
@@ -96,12 +96,15 @@ export function ChatInput() {
               {modes.map((m) => (
                 <button
                   key={m.value}
-                  onClick={() => setActiveMode(m.value)}
+                  onClick={() => !m.disabled && setActiveMode(m.value)}
+                  disabled={m.disabled}
                   className={cn(
                     'px-2 py-1 text-[11px] transition-colors',
-                    activeMode === m.value
-                      ? 'bg-primary/20 text-primary font-medium'
-                      : 'text-muted-foreground hover:text-foreground'
+                    m.disabled
+                      ? 'text-muted-foreground/40 cursor-not-allowed'
+                      : activeMode === m.value
+                        ? 'bg-primary/20 text-primary font-medium'
+                        : 'text-muted-foreground hover:text-foreground'
                   )}
                 >
                   {m.label}

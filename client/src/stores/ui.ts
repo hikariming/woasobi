@@ -10,14 +10,14 @@ interface UIStore {
   previewTab: PreviewTab;
   settingsOpen: boolean;
   activeModelId: string;
-  activeMode: "auto" | "ask" | "manual";
+  activeMode: "claudeCode" | "codex" | "woAgent";
   toggleSidebar: () => void;
   setSecondaryPanel: (p: SecondaryPanel) => void;
   togglePreview: () => void;
   setPreviewTab: (t: PreviewTab) => void;
   setSettingsOpen: (o: boolean) => void;
   setActiveModelId: (id: string) => void;
-  setActiveMode: (m: "auto" | "ask" | "manual") => void;
+  setActiveMode: (m: "claudeCode" | "codex" | "woAgent") => void;
 }
 
 export const useUIStore = create<UIStore>((set) => ({
@@ -27,7 +27,7 @@ export const useUIStore = create<UIStore>((set) => ({
   previewTab: "changes",
   settingsOpen: false,
   activeModelId: "gpt-5.3-codex",
-  activeMode: "auto",
+  activeMode: "claudeCode",
   toggleSidebar: () => set((s) => ({ sidebarOpen: !s.sidebarOpen })),
   setSecondaryPanel: (p) => set((s) => ({ secondaryPanel: s.secondaryPanel === p ? null : p })),
   togglePreview: () => set((s) => ({ previewOpen: !s.previewOpen })),
