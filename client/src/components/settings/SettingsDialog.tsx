@@ -1,10 +1,12 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   X, User, Cpu, Settings, Plug, FolderOpen, Wrench, Info,
-  Moon, Sun, Monitor,
+  Moon, Sun, Monitor, Eye, EyeOff, CheckCircle, XCircle,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useUIStore } from '@/stores/ui';
+import { useSettingsStore } from '@/stores/settings';
+import { checkHealth } from '@/lib/api/agent';
 
 type SettingsTab = 'account' | 'models' | 'general' | 'mcp' | 'workspace' | 'skills' | 'about';
 
@@ -121,35 +123,166 @@ function AccountTab() {
   );
 }
 
+function ApiKeyInput({ value, onChange, placeholder }: {
+  value: string;
+  onChange: (v: string) => void;
+  placeholder: string;
+}) {
+  const [show, setShow] = useState(false);
+  return (
+    <div className="relative">
+      <input
+        type={show ? 'text' : 'password'}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        className="w-full text-xs bg-muted border border-border rounded-md px-3 py-1.5 pr-8 text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+      />
+      <button
+        onClick={() => setShow(!show)}
+        className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+      >
+        {show ? <EyeOff size={12} /> : <Eye size={12} />}
+      </button>
+    </div>
+  );
+}
+
+function CliStatusBadge({ found, name }: { found: boolean | null; name: string }) {
+  if (found === null) return null;
+  return found ? (
+    <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-500/10 text-green-400">
+      {name} CLI detected
+    </span>
+  ) : (
+    <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
+      {name} CLI not found
+    </span>
+  );
+}
+
+function AuthStatus({ hasApiKey, cliFoud }: { hasApiKey: boolean; cliFoud: boolean | null }) {
+  if (hasApiKey) {
+    return <div className={cn('w-2 h-2 rounded-full bg-green-400')} title="Using API Key" />;
+  }
+  if (cliFoud) {
+    return <div className={cn('w-2 h-2 rounded-full bg-blue-400')} title="Using CLI subscription" />;
+  }
+  return <div className={cn('w-2 h-2 rounded-full bg-muted-foreground/30')} title="Not configured" />;
+}
+
 function ModelsTab() {
-  const providers = [
-    { name: 'Anthropic', key: 'sk-ant-***...8f3', models: ['Claude Opus 4.6', 'Claude Sonnet 4.5', 'Claude Haiku 4.5'], active: true },
-    { name: 'OpenAI', key: 'sk-proj-***...x2k', models: ['GPT-5.3 Codex', 'GPT-4.1'], active: true },
-    { name: 'DeepSeek', key: '', models: ['DeepSeek V3'], active: false },
-  ];
+  const {
+    anthropicApiKey, anthropicBaseUrl,
+    openaiApiKey, openaiBaseUrl,
+    setAnthropicApiKey, setAnthropicBaseUrl,
+    setOpenaiApiKey, setOpenaiBaseUrl,
+  } = useSettingsStore();
+
+  const { cliStatus } = useUIStore();
+
+  const [backendOk, setBackendOk] = useState<boolean | null>(null);
+  const [showAdvanced, setShowAdvanced] = useState(false);
+
+  useEffect(() => {
+    checkHealth().then((h) => setBackendOk(h.ok));
+  }, []);
 
   return (
     <div className="space-y-4">
-      {providers.map((p) => (
-        <div key={p.name} className="border border-border rounded-lg p-3">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-sm font-medium text-foreground">{p.name}</span>
-            <div className={cn(
-              'w-2 h-2 rounded-full',
-              p.active ? 'bg-green-400' : 'bg-muted-foreground/30'
-            )} />
+      {/* Backend Status */}
+      <div className="flex items-center gap-2 text-xs">
+        {backendOk === null ? (
+          <span className="text-muted-foreground">Checking backend...</span>
+        ) : backendOk ? (
+          <><CheckCircle size={14} className="text-green-400" /><span className="text-green-400">Backend connected</span></>
+        ) : (
+          <><XCircle size={14} className="text-red-400" /><span className="text-red-400">Backend offline - run `pnpm dev:api`</span></>
+        )}
+        <button
+          onClick={() => checkHealth().then((h) => setBackendOk(h.ok))}
+          className="text-primary hover:underline ml-auto"
+        >
+          Refresh
+        </button>
+      </div>
+
+      {/* Anthropic */}
+      <div className="border border-border rounded-lg p-3 space-y-2">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-medium text-foreground">Anthropic (Claude Code)</span>
+            <CliStatusBadge found={cliStatus?.claude ?? null} name="claude" />
           </div>
-          <div className="text-xs text-muted-foreground mb-2">
-            API Key: {p.key || <span className="italic">Not configured</span>}
-          </div>
-          <div className="flex flex-wrap gap-1">
-            {p.models.map((m) => (
-              <span key={m} className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">{m}</span>
-            ))}
-          </div>
+          <AuthStatus hasApiKey={!!anthropicApiKey} cliFoud={cliStatus?.claude ?? null} />
         </div>
-      ))}
-      <button className="text-xs text-primary hover:underline">+ Add Provider</button>
+        {!anthropicApiKey && cliStatus?.claude && (
+          <div className="text-[11px] text-blue-400 bg-blue-500/5 rounded px-2 py-1">
+            Using CLI subscription login. API Key is optional.
+          </div>
+        )}
+        <ApiKeyInput
+          value={anthropicApiKey}
+          onChange={setAnthropicApiKey}
+          placeholder="sk-ant-... (optional if using CLI subscription)"
+        />
+        {showAdvanced && (
+          <input
+            type="text"
+            value={anthropicBaseUrl}
+            onChange={(e) => setAnthropicBaseUrl(e.target.value)}
+            placeholder="Base URL (optional, e.g. https://api.openrouter.ai/v1)"
+            className="w-full text-xs bg-muted border border-border rounded-md px-3 py-1.5 text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+          />
+        )}
+        <div className="flex flex-wrap gap-1">
+          {['Claude Opus 4.6', 'Claude Sonnet 4.5', 'Claude Haiku 4.5'].map((m) => (
+            <span key={m} className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">{m}</span>
+          ))}
+        </div>
+      </div>
+
+      {/* OpenAI */}
+      <div className="border border-border rounded-lg p-3 space-y-2">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-medium text-foreground">OpenAI (Codex)</span>
+            <CliStatusBadge found={cliStatus?.codex ?? null} name="codex" />
+          </div>
+          <AuthStatus hasApiKey={!!openaiApiKey} cliFoud={cliStatus?.codex ?? null} />
+        </div>
+        {!openaiApiKey && cliStatus?.codex && (
+          <div className="text-[11px] text-blue-400 bg-blue-500/5 rounded px-2 py-1">
+            Using CLI subscription login. API Key is optional.
+          </div>
+        )}
+        <ApiKeyInput
+          value={openaiApiKey}
+          onChange={setOpenaiApiKey}
+          placeholder="sk-proj-... (optional if using CLI subscription)"
+        />
+        {showAdvanced && (
+          <input
+            type="text"
+            value={openaiBaseUrl}
+            onChange={(e) => setOpenaiBaseUrl(e.target.value)}
+            placeholder="Base URL (optional)"
+            className="w-full text-xs bg-muted border border-border rounded-md px-3 py-1.5 text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+          />
+        )}
+        <div className="flex flex-wrap gap-1">
+          {['GPT-5.3 Codex', 'GPT-4.1'].map((m) => (
+            <span key={m} className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">{m}</span>
+          ))}
+        </div>
+      </div>
+
+      <button
+        onClick={() => setShowAdvanced(!showAdvanced)}
+        className="text-xs text-muted-foreground hover:text-foreground"
+      >
+        {showAdvanced ? 'Hide' : 'Show'} advanced settings
+      </button>
     </div>
   );
 }

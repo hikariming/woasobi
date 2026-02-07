@@ -1,18 +1,21 @@
 import { useState, useRef, useCallback } from 'react';
-import { Send, ChevronDown } from 'lucide-react';
+import { Send, Square, ChevronDown } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useChatStore } from '@/stores/chat';
 import { useUIStore } from '@/stores/ui';
-import { mockModels } from '@/mocks/models';
+import { useSettingsStore } from '@/stores/settings';
+import { getModelsForMode } from '@/config/models';
 
 export function ChatInput() {
   const [text, setText] = useState('');
   const [showModelDropdown, setShowModelDropdown] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const { sendMessage, isStreaming } = useChatStore();
+  const { sendMessage, isStreaming, stopStreaming } = useChatStore();
   const { activeModelId, setActiveModelId, activeMode, setActiveMode } = useUIStore();
+  const { setActiveClaudeModel, setActiveCodexModel } = useSettingsStore();
 
-  const activeModel = mockModels.find((m) => m.id === activeModelId);
+  const availableModels = getModelsForMode(activeMode);
+  const activeModel = availableModels.find((m) => m.id === activeModelId);
 
   const handleSend = useCallback(() => {
     const trimmed = text.trim();
@@ -37,6 +40,17 @@ export function ChatInput() {
       el.style.height = 'auto';
       el.style.height = Math.min(el.scrollHeight, 200) + 'px';
     }
+  };
+
+  const handleModelSelect = (modelId: string) => {
+    setActiveModelId(modelId);
+    // Also persist to settings store
+    if (activeMode === 'claudeCode') {
+      setActiveClaudeModel(modelId);
+    } else if (activeMode === 'codex') {
+      setActiveCodexModel(modelId);
+    }
+    setShowModelDropdown(false);
   };
 
   const modes: Array<{ value: 'claudeCode' | 'codex' | 'woAgent'; label: string; disabled?: boolean }> = [
@@ -74,10 +88,10 @@ export function ChatInput() {
               </button>
               {showModelDropdown && (
                 <div className="absolute bottom-full left-0 mb-1 w-48 rounded-lg border border-border bg-popover shadow-lg py-1 z-50">
-                  {mockModels.map((m) => (
+                  {availableModels.map((m) => (
                     <button
                       key={m.id}
-                      onClick={() => { setActiveModelId(m.id); setShowModelDropdown(false); }}
+                      onClick={() => handleModelSelect(m.id)}
                       className={cn(
                         'w-full px-3 py-1.5 text-xs text-left hover:bg-muted transition-colors flex items-center justify-between',
                         m.id === activeModelId ? 'text-primary' : 'text-foreground'
@@ -87,6 +101,9 @@ export function ChatInput() {
                       <span className="text-[10px] text-muted-foreground">{m.provider}</span>
                     </button>
                   ))}
+                  {availableModels.length === 0 && (
+                    <div className="px-3 py-1.5 text-xs text-muted-foreground italic">No models available</div>
+                  )}
                 </div>
               )}
             </div>
@@ -113,19 +130,29 @@ export function ChatInput() {
             </div>
           </div>
 
-          {/* Send Button */}
-          <button
-            onClick={handleSend}
-            disabled={!text.trim() || isStreaming}
-            className={cn(
-              'p-1.5 rounded-lg transition-colors',
-              text.trim() && !isStreaming
-                ? 'bg-primary text-primary-foreground hover:bg-primary/90'
-                : 'bg-muted text-muted-foreground cursor-not-allowed'
-            )}
-          >
-            <Send size={14} />
-          </button>
+          {/* Send / Stop Button */}
+          {isStreaming ? (
+            <button
+              onClick={stopStreaming}
+              className="p-1.5 rounded-lg bg-red-500/20 text-red-400 hover:bg-red-500/30 transition-colors"
+              title="Stop generation"
+            >
+              <Square size={14} />
+            </button>
+          ) : (
+            <button
+              onClick={handleSend}
+              disabled={!text.trim()}
+              className={cn(
+                'p-1.5 rounded-lg transition-colors',
+                text.trim()
+                  ? 'bg-primary text-primary-foreground hover:bg-primary/90'
+                  : 'bg-muted text-muted-foreground cursor-not-allowed'
+              )}
+            >
+              <Send size={14} />
+            </button>
+          )}
         </div>
       </div>
     </div>

@@ -29,6 +29,9 @@ export interface Message {
   content: string;
   toolCalls?: ToolCall[];
   timestamp: string;
+  cost?: number;
+  duration?: number;
+  isError?: boolean;
 }
 
 export type FileStatus = "modified" | "added" | "deleted";
