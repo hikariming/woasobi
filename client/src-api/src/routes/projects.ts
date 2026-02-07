@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { nanoid } from 'nanoid';
 import { existsSync } from 'node:fs';
 import { basename } from 'node:path';
-import { loadProjects, saveProjects, loadAllThreads, saveThread, type StoredThread } from '../storage/index.js';
+import { loadProjects, saveProjects, loadAllThreads, saveThread, deleteThread as deleteStoredThread, type StoredThread } from '../storage/index.js';
 import { discoverAndMerge, discoverClaudeSessions, discoverCodexSessions } from '../storage/discover.js';
 
 const projects = new Hono();
@@ -42,6 +42,22 @@ projects.post('/', async (c) => {
   return c.json(project, 201);
 });
 
+// Update a project (e.g. toggle pinned)
+projects.patch('/:id', async (c) => {
+  const id = c.req.param('id');
+  const body = await c.req.json<{ pinned?: boolean }>();
+  const existing = await loadProjects();
+  const idx = existing.findIndex((p) => p.id === id);
+
+  if (idx === -1) {
+    return c.json({ error: 'project not found' }, 404);
+  }
+
+  if (body.pinned !== undefined) existing[idx].pinned = body.pinned;
+  await saveProjects(existing);
+  return c.json(existing[idx]);
+});
+
 // Delete a project
 projects.delete('/:id', async (c) => {
   const id = c.req.param('id');
@@ -54,6 +70,19 @@ projects.delete('/:id', async (c) => {
 
   await saveProjects(filtered);
   return c.json({ ok: true });
+});
+
+// Delete all threads for a project
+projects.delete('/:id/threads', async (c) => {
+  const id = c.req.param('id');
+  const allThreads = await loadAllThreads();
+  const toDelete = allThreads.filter((t) => t.projectId === id);
+
+  for (const t of toDelete) {
+    await deleteStoredThread(t.id);
+  }
+
+  return c.json({ deleted: toDelete.length });
 });
 
 // Discover projects from Claude Code + Codex, and import CLI sessions as threads

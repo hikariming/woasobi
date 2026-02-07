@@ -4,6 +4,7 @@ import {
   fetchProjects,
   addProject as apiAddProject,
   removeProject as apiRemoveProject,
+  updateProject as apiUpdateProject,
   discoverProjects,
 } from "@/lib/api/data";
 import { useChatStore } from "./chat";
@@ -15,9 +16,10 @@ interface ProjectStore {
   discover: () => Promise<void>;
   addProject: (path: string) => Promise<void>;
   removeProject: (id: string) => Promise<void>;
+  togglePin: (id: string) => Promise<void>;
 }
 
-export const useProjectStore = create<ProjectStore>((set) => ({
+export const useProjectStore = create<ProjectStore>((set, get) => ({
   projects: [],
   loading: false,
 
@@ -62,6 +64,20 @@ export const useProjectStore = create<ProjectStore>((set) => ({
       set((s) => ({ projects: s.projects.filter((p) => p.id !== id) }));
     } catch {
       // Failed to remove
+    }
+  },
+
+  togglePin: async (id) => {
+    const project = get().projects.find((p) => p.id === id);
+    if (!project) return;
+    const pinned = !project.pinned;
+    try {
+      await apiUpdateProject(id, { pinned });
+      set((s) => ({
+        projects: s.projects.map((p) => (p.id === id ? { ...p, pinned } : p)),
+      }));
+    } catch {
+      // Failed to toggle pin
     }
   },
 }));

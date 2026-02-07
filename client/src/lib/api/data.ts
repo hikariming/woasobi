@@ -27,6 +27,22 @@ export async function removeProject(id: string): Promise<void> {
   if (!res.ok) throw new Error(`Failed to remove project: ${res.status}`);
 }
 
+export async function updateProject(id: string, updates: { pinned?: boolean }): Promise<Project> {
+  const res = await fetch(`${API_BASE_URL}/projects/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(updates),
+  });
+  if (!res.ok) throw new Error(`Failed to update project: ${res.status}`);
+  return res.json();
+}
+
+export async function clearProjectThreads(id: string): Promise<{ deleted: number }> {
+  const res = await fetch(`${API_BASE_URL}/projects/${id}/threads`, { method: 'DELETE' });
+  if (!res.ok) throw new Error(`Failed to clear threads: ${res.status}`);
+  return res.json();
+}
+
 export async function discoverProjects(): Promise<Project[]> {
   const res = await fetch(`${API_BASE_URL}/projects/discover`, { method: 'POST' });
   if (!res.ok) throw new Error(`Failed to discover projects: ${res.status}`);

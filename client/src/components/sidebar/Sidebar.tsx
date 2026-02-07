@@ -4,7 +4,7 @@ import {
   ChevronDown, ArrowLeft, FolderOpen, Trash2,
   FileCode, Bug, RefreshCw, FlaskConical, FileText,
   Image, Globe, Terminal, GitBranch, Plug, Loader2,
-  FolderSearch, FolderPlus,
+  FolderSearch, FolderPlus, Pin, PinOff,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useChatStore, useUIStore, useProjectStore } from "@/stores";
@@ -29,9 +29,9 @@ function formatRelativeTime(iso: string): string {
 }
 
 export function Sidebar() {
-  const { threads, activeThreadId, setActiveThread, createThread, deleteThread } = useChatStore();
+  const { threads, activeThreadId, setActiveThread, createThread, deleteThread, clearProjectThreads } = useChatStore();
   const { secondaryPanel, setSecondaryPanel, setSettingsOpen } = useUIStore();
-  const { projects, loading: projectsLoading, discover, addProject, removeProject } = useProjectStore();
+  const { projects, loading: projectsLoading, discover, addProject, removeProject, togglePin } = useProjectStore();
   const [searchQuery, setSearchQuery] = useState("");
   const [addingProject, setAddingProject] = useState(false);
   const [newProjectPath, setNewProjectPath] = useState("");
@@ -44,8 +44,11 @@ export function Sidebar() {
     return () => window.removeEventListener("click", handler);
   }, []);
 
+  // Sort projects: pinned first, then original order
+  const sortedProjects = [...projects].sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0));
+
   // Group threads by project (show all projects, even empty ones)
-  const grouped = projects.map((project) => ({
+  const grouped = sortedProjects.map((project) => ({
     project,
     items: threads
       .filter((t) => t.projectId === project.id)
@@ -223,7 +226,7 @@ export function Sidebar() {
       {/* Context menu */}
       {contextMenu && (
         <div
-          className="fixed z-50 min-w-[120px] rounded-md border border-border bg-popover p-1 shadow-md"
+          className="fixed z-50 min-w-[140px] rounded-md border border-border bg-popover p-1 shadow-md"
           style={{ left: contextMenu.x, top: contextMenu.y }}
         >
           {contextMenu.type === "thread" && (
@@ -237,17 +240,45 @@ export function Sidebar() {
               <Trash2 className="size-3" /> Delete
             </button>
           )}
-          {contextMenu.type === "project" && (
-            <button
-              onClick={() => {
-                removeProject(contextMenu.id);
-                setContextMenu(null);
-              }}
-              className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-xs text-destructive hover:bg-accent"
-            >
-              <Trash2 className="size-3" /> Remove
-            </button>
-          )}
+          {contextMenu.type === "project" && (() => {
+            const proj = projects.find((p) => p.id === contextMenu.id);
+            const isPinned = proj?.pinned;
+            const hasThreads = threads.some((t) => t.projectId === contextMenu.id);
+            return (
+              <>
+                <button
+                  onClick={() => {
+                    togglePin(contextMenu.id);
+                    setContextMenu(null);
+                  }}
+                  className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-xs text-foreground hover:bg-accent"
+                >
+                  {isPinned ? <PinOff className="size-3" /> : <Pin className="size-3" />}
+                  {isPinned ? "Unpin" : "Pin to Top"}
+                </button>
+                {hasThreads && (
+                  <button
+                    onClick={() => {
+                      clearProjectThreads(contextMenu.id);
+                      setContextMenu(null);
+                    }}
+                    className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-xs text-destructive hover:bg-accent"
+                  >
+                    <Trash2 className="size-3" /> Clear All Threads
+                  </button>
+                )}
+                <button
+                  onClick={() => {
+                    removeProject(contextMenu.id);
+                    setContextMenu(null);
+                  }}
+                  className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-xs text-destructive hover:bg-accent"
+                >
+                  <Trash2 className="size-3" /> Remove
+                </button>
+              </>
+            );
+          })()}
         </div>
       )}
 
@@ -282,6 +313,9 @@ function ProjectGroup({ project, threads, activeId, onSelect, onContextMenu, onN
           <ChevronDown className={cn("size-3 transition-transform", !open && "-rotate-90")} />
           <FolderOpen className="size-3" />
           <span className="truncate">{project.name}</span>
+          {project.pinned && (
+            <Pin className="size-2.5 text-primary shrink-0" />
+          )}
           {project.source && project.source !== "manual" && (
             <span className="ml-1 text-[9px] text-muted-foreground/60">
               {project.source === 'claude+codex' ? 'CC+CX' : project.source === 'claude' ? 'CC' : 'CX'}

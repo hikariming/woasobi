@@ -7,6 +7,7 @@ import {
   createThread as apiCreateThread,
   updateThread as apiUpdateThread,
   deleteThread as apiDeleteThread,
+  clearProjectThreads as apiClearProjectThreads,
   fetchMessages,
 } from "@/lib/api/data";
 import { useSettingsStore } from "./settings";
@@ -30,6 +31,7 @@ interface ChatStore {
   stopStreaming: () => void;
   deleteThread: (id: string) => Promise<void>;
   renameThread: (id: string, title: string) => Promise<void>;
+  clearProjectThreads: (projectId: string) => Promise<void>;
 }
 
 export const useChatStore = create<ChatStore>((set, get) => ({
@@ -305,6 +307,25 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       set((s) => ({
         threads: s.threads.map((t) => (t.id === id ? updated : t)),
       }));
+    } catch {
+      // Failed
+    }
+  },
+
+  clearProjectThreads: async (projectId) => {
+    try {
+      await apiClearProjectThreads(projectId);
+      set((s) => {
+        const removedIds = s.threads.filter((t) => t.projectId === projectId).map((t) => t.id);
+        const messages = { ...s.messages };
+        for (const id of removedIds) delete messages[id];
+        const threads = s.threads.filter((t) => t.projectId !== projectId);
+        return {
+          threads,
+          messages,
+          activeThreadId: removedIds.includes(s.activeThreadId || '') ? (threads[0]?.id || null) : s.activeThreadId,
+        };
+      });
     } catch {
       // Failed
     }
