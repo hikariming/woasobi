@@ -4,11 +4,12 @@ import {
   Plus, Zap, Wrench, Puzzle, Settings, Search,
   ChevronDown, ArrowLeft, FolderOpen, Trash2,
   FileCode, Bug, RefreshCw, FlaskConical, FileText,
-  Image, Globe, Terminal, GitBranch, Plug, Loader2,
+  Image, Globe, Terminal, GitBranch, Plug, Loader2, Circle,
   FolderSearch, FolderPlus, Pin, PinOff,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useChatStore, useUIStore, useProjectStore } from "@/stores";
+import type { ThreadRuntimeStatus } from "@/stores/chat";
 import { mockSkills } from "@/mocks/skills";
 import { mockTools } from "@/mocks/tools";
 import type { Project, Thread } from "@/types";
@@ -30,7 +31,16 @@ function formatRelativeTime(iso: string): string {
 }
 
 export function Sidebar() {
-  const { threads, activeThreadId, setActiveThread, createThread, deleteThread, clearProjectThreads } = useChatStore();
+  const {
+    threads,
+    activeThreadId,
+    isStreaming,
+    threadRuntimeStatus,
+    setActiveThread,
+    createThread,
+    deleteThread,
+    clearProjectThreads,
+  } = useChatStore();
   const { secondaryPanel, setSecondaryPanel, setSettingsOpen } = useUIStore();
   const { projects, loading: projectsLoading, discover, addProject, removeProject, togglePin } = useProjectStore();
   const [searchQuery, setSearchQuery] = useState("");
@@ -170,6 +180,8 @@ export function Sidebar() {
             project={project}
             threads={items}
             activeId={activeThreadId}
+            isStreaming={isStreaming}
+            threadRuntimeStatus={threadRuntimeStatus}
             onSelect={(id) => setActiveThread(id)}
             onNewThread={(pid) => createThread(pid)}
             onContextMenu={(e, type, id) => {
@@ -183,6 +195,8 @@ export function Sidebar() {
             project={{ id: "__orphan", name: "Other", path: "", source: "manual", addedAt: "" }}
             threads={orphanThreads}
             activeId={activeThreadId}
+            isStreaming={isStreaming}
+            threadRuntimeStatus={threadRuntimeStatus}
             onSelect={(id) => setActiveThread(id)}
             onNewThread={() => {}}
             onContextMenu={(e, type, id) => {
@@ -274,10 +288,12 @@ export function Sidebar() {
   );
 }
 
-function ProjectGroup({ project, threads, activeId, onSelect, onContextMenu, onNewThread }: {
+function ProjectGroup({ project, threads, activeId, isStreaming, threadRuntimeStatus, onSelect, onContextMenu, onNewThread }: {
   project: Project;
   threads: Thread[];
   activeId: string | null;
+  isStreaming: boolean;
+  threadRuntimeStatus: Record<string, ThreadRuntimeStatus>;
   onSelect: (id: string) => void;
   onContextMenu: (e: React.MouseEvent, type: "thread" | "project", id: string) => void;
   onNewThread: (projectId: string) => void;
@@ -322,6 +338,12 @@ function ProjectGroup({ project, threads, activeId, onSelect, onContextMenu, onN
             <div className="text-muted-foreground/50 px-2 py-1 text-[10px] italic">No threads</div>
           )}
           {threads.map((t) => (
+            (() => {
+              const isActiveThread = t.id === activeId;
+              const status = isActiveThread
+                ? (isStreaming ? "running" : threadRuntimeStatus[t.id])
+                : undefined;
+              return (
             <button
               key={t.id}
               onClick={() => onSelect(t.id)}
@@ -333,6 +355,9 @@ function ProjectGroup({ project, threads, activeId, onSelect, onContextMenu, onN
             >
               <span className="truncate pr-2">{t.title}</span>
               <span className="flex items-center gap-1 shrink-0">
+                {status && (
+                  <ThreadStatusIndicator status={status} />
+                )}
                 {t.sourcePath && (
                   <span className="text-[9px] text-muted-foreground/50">
                     {t.mode === 'codex' ? 'CX' : 'CC'}
@@ -343,10 +368,34 @@ function ProjectGroup({ project, threads, activeId, onSelect, onContextMenu, onN
                 </span>
               </span>
             </button>
+              );
+            })()
           ))}
         </div>
       )}
     </div>
+  );
+}
+
+function ThreadStatusIndicator({ status }: { status: ThreadRuntimeStatus }) {
+  if (status === "running") {
+    return (
+      <span title="Running" aria-label="Running">
+        <Loader2 className="size-3.5 animate-spin text-sky-500" />
+      </span>
+    );
+  }
+  if (status === "awaiting-permission") {
+    return (
+      <span title="Waiting for permission" aria-label="Waiting for permission">
+        <Circle className="size-2.5 fill-amber-400 text-amber-400" />
+      </span>
+    );
+  }
+  return (
+    <span title="Completed" aria-label="Completed">
+      <Circle className="size-2.5 fill-emerald-400 text-emerald-400" />
+    </span>
   );
 }
 

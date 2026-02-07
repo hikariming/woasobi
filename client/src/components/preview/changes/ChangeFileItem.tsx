@@ -69,7 +69,7 @@ export function ChangeFileItem({
           <button
             onClick={onRevert}
             className="p-1 rounded text-muted-foreground hover:text-red-400 hover:bg-muted/50 transition-colors"
-            title="Revert (mock)"
+            title="Revert changes"
           >
             <RotateCcw size={12} />
           </button>

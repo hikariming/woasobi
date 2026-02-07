@@ -12,6 +12,25 @@ import {
 } from "@/lib/api/data";
 import { useSettingsStore } from "./settings";
 import { useUIStore } from "./ui";
+import { usePreviewStore } from "./preview";
+
+/** Extract a human-readable summary for non-Bash tool calls */
+function getToolSummary(name: string, input: Record<string, unknown>): string {
+  switch (name) {
+    case "Read": return String(input?.file_path || input?.path || "");
+    case "Edit": return String(input?.file_path || input?.path || "");
+    case "Write": return String(input?.file_path || input?.path || "");
+    case "Glob": return String(input?.pattern || "");
+    case "Grep": return String(input?.pattern || "");
+    case "WebSearch": return String(input?.query || "");
+    case "WebFetch": return String(input?.url || "");
+    case "Task": return String(input?.description || input?.prompt || "").slice(0, 60);
+    case "TodoWrite": return "updating tasks";
+    default: return JSON.stringify(input).slice(0, 80);
+  }
+}
+
+export type ThreadRuntimeStatus = "running" | "awaiting-permission" | "completed";
 
 interface ChatStore {
   threads: Thread[];
@@ -22,6 +41,7 @@ interface ChatStore {
   isStreaming: boolean;
   currentSessionId: string | null;
   abortController: AbortController | null;
+  threadRuntimeStatus: Record<string, ThreadRuntimeStatus>;
   threadsLoading: boolean;
   messagesLoading: boolean;
   loadThreads: (projectId?: string) => Promise<void>;
@@ -43,6 +63,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   isStreaming: false,
   currentSessionId: null,
   abortController: null,
+  threadRuntimeStatus: {},
   threadsLoading: false,
   messagesLoading: false,
 
@@ -126,6 +147,10 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       streamingToolCalls: [],
       currentSessionId: null,
       abortController,
+      threadRuntimeStatus: {
+        ...get().threadRuntimeStatus,
+        [activeThreadId]: "running",
+      },
     });
 
     // Get config from stores
@@ -146,6 +171,14 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     const toolCalls: ToolCall[] = [];
     let cost: number | undefined;
     let duration: number | undefined;
+
+    // Prepare preview panel for this run
+    const preview = usePreviewStore.getState();
+    preview.clearActiveTerminal();
+    preview.clearTouchedFiles();
+    preview.clearArtifacts();
+    preview.setTerminalRunning(true);
+    useUIStore.getState().setPreviewTab("terminal");
 
     try {
       const response = await sendAgentRequest(content, {
@@ -182,16 +215,28 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           }
 
           case "status":
-            if (msg.permissionMode) {
-              useUIStore.getState().setPermissionMode(msg.permissionMode);
-            }
+            if (msg.permissionMode) useUIStore.getState().setPermissionMode(msg.permissionMode);
+            set((s) => ({
+              threadRuntimeStatus: {
+                ...s.threadRuntimeStatus,
+                [activeThreadId]: msg.awaitingPermission ? "awaiting-permission" : "running",
+              },
+            }));
             break;
 
           case "text":
             if (msg.content) {
               fullText += msg.content;
               set({ streamingText: fullText });
+              // Detect HTML artifacts in streamed text
+              preview.extractArtifactsFromText(fullText);
             }
+            set((s) => ({
+              threadRuntimeStatus: {
+                ...s.threadRuntimeStatus,
+                [activeThreadId]: "running",
+              },
+            }));
             break;
 
           case "tool_use":
@@ -203,7 +248,38 @@ export const useChatStore = create<ChatStore>((set, get) => ({
               };
               toolCalls.push(tc);
               set({ streamingToolCalls: [...toolCalls] });
+
+              // Route to Terminal tab
+              const input = (msg.input as Record<string, unknown>) || {};
+              if (msg.name === "Bash") {
+                const cmd = String(input.command || "");
+                preview.appendTerminalLine({ type: "cmd", text: `$ ${cmd}` });
+              } else {
+                const summary = getToolSummary(msg.name, input);
+                preview.appendTerminalLine({ type: "info", text: `${msg.name}: ${summary}` });
+              }
+
+              // Track touched files
+              if (["Read", "Edit", "Write"].includes(msg.name)) {
+                const filePath = String(input.file_path || input.path || "");
+                if (filePath) preview.addTouchedFile(filePath);
+              }
+
+              // Detect HTML file writes for Artifacts
+              if (msg.name === "Write") {
+                const filePath = String(input.file_path || "");
+                const content = String(input.content || "");
+                if ((filePath.endsWith(".html") || filePath.endsWith(".htm")) && content.length > 50) {
+                  preview.addArtifact(filePath.split("/").pop() || "HTML File", content);
+                }
+              }
             }
+            set((s) => ({
+              threadRuntimeStatus: {
+                ...s.threadRuntimeStatus,
+                [activeThreadId]: "running",
+              },
+            }));
             break;
 
           case "tool_result":
@@ -212,6 +288,21 @@ export const useChatStore = create<ChatStore>((set, get) => ({
               if (tc) {
                 tc.output = msg.output;
                 set({ streamingToolCalls: [...toolCalls] });
+
+                // Route Bash output to Terminal tab
+                if (tc.name === "Bash") {
+                  const output = msg.output || "";
+                  const lineType = msg.isError ? "err" as const : "out" as const;
+                  const lines = output.split("\n");
+                  // Truncate very long output
+                  const maxLines = 200;
+                  const display = lines.length > maxLines
+                    ? [...lines.slice(0, maxLines), `... (${lines.length - maxLines} more lines)`]
+                    : lines;
+                  for (const line of display) {
+                    preview.appendTerminalLine({ type: lineType, text: line });
+                  }
+                }
               }
             }
             break;
@@ -241,6 +332,16 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           : `**Connection Error:** ${errorMsg}`;
       }
     } finally {
+      // Stop terminal running indicator
+      preview.setTerminalRunning(false);
+
+      // Refresh files and git status after agent completes
+      const projectId = preview.activeProjectId;
+      if (projectId) {
+        preview.loadFiles(projectId);
+        preview.loadGitStatus(projectId);
+      }
+
       // Create final assistant message in local state
       if (fullText) {
         const aiMsg: Message = {
@@ -261,6 +362,10 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           streamingToolCalls: [],
           currentSessionId: null,
           abortController: null,
+          threadRuntimeStatus: {
+            ...s.threadRuntimeStatus,
+            [activeThreadId]: "completed",
+          },
           messages: {
             ...s.messages,
             [activeThreadId]: [
@@ -286,13 +391,17 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           streamingToolCalls: [],
           currentSessionId: null,
           abortController: null,
+          threadRuntimeStatus: {
+            ...get().threadRuntimeStatus,
+            [activeThreadId]: "completed",
+          },
         });
       }
     }
   },
 
   stopStreaming: () => {
-    const { abortController, currentSessionId } = get();
+    const { abortController, currentSessionId, activeThreadId, threadRuntimeStatus } = get();
     if (abortController) {
       abortController.abort();
     }
@@ -305,6 +414,14 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       streamingToolCalls: [],
       currentSessionId: null,
       abortController: null,
+      ...(activeThreadId
+        ? {
+            threadRuntimeStatus: {
+              ...threadRuntimeStatus,
+              [activeThreadId]: "completed",
+            },
+          }
+        : {}),
     });
   },
 
@@ -314,10 +431,13 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       set((s) => {
         const threads = s.threads.filter((t) => t.id !== id);
         const messages = { ...s.messages };
+        const threadRuntimeStatus = { ...s.threadRuntimeStatus };
         delete messages[id];
+        delete threadRuntimeStatus[id];
         return {
           threads,
           messages,
+          threadRuntimeStatus,
           activeThreadId: s.activeThreadId === id ? (threads[0]?.id || null) : s.activeThreadId,
         };
       });
@@ -343,11 +463,14 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       set((s) => {
         const removedIds = s.threads.filter((t) => t.projectId === projectId).map((t) => t.id);
         const messages = { ...s.messages };
+        const threadRuntimeStatus = { ...s.threadRuntimeStatus };
         for (const id of removedIds) delete messages[id];
+        for (const id of removedIds) delete threadRuntimeStatus[id];
         const threads = s.threads.filter((t) => t.projectId !== projectId);
         return {
           threads,
           messages,
+          threadRuntimeStatus,
           activeThreadId: removedIds.includes(s.activeThreadId || '') ? (threads[0]?.id || null) : s.activeThreadId,
         };
       });

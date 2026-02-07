@@ -1,10 +1,22 @@
-import { Download, RefreshCw, ZoomIn } from "lucide-react";
+import { Download, ImageIcon, ZoomIn } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { usePreviewStore } from "@/stores/preview";
 
 export function ImageTab() {
-  const { images, selectedImageId, isRegeneratingImage, selectImage, regenerateImage } = usePreviewStore();
+  const { images, selectedImageId, selectImage } = usePreviewStore();
   const selected = images.find((img) => img.id === selectedImageId) || images[0];
+
+  if (images.length === 0) {
+    return (
+      <div className="h-full flex flex-col items-center justify-center text-center px-6">
+        <ImageIcon size={24} className="text-muted-foreground mb-2" />
+        <p className="text-sm font-medium text-foreground">No images yet</p>
+        <p className="text-xs text-muted-foreground mt-1">
+          Images from agent operations will appear here.
+        </p>
+      </div>
+    );
+  }
 
   const onDownload = () => {
     if (!selected) return;
@@ -26,12 +38,6 @@ export function ImageTab() {
             className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
           >
             <Download size={14} />
-          </button>
-          <button
-            onClick={regenerateImage}
-            className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
-          >
-            <RefreshCw size={14} className={cn(isRegeneratingImage && "animate-spin")} />
           </button>
         </div>
       </div>

@@ -1,9 +1,14 @@
 import { Hono } from 'hono';
 import { nanoid } from 'nanoid';
 import { existsSync } from 'node:fs';
-import { basename } from 'node:path';
+import { readdir } from 'node:fs/promises';
+import { basename, join, extname } from 'node:path';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { loadProjects, saveProjects, loadAllThreads, saveThread, deleteThread as deleteStoredThread, type StoredThread } from '../storage/index.js';
 import { discoverAndMerge, discoverClaudeSessions, discoverCodexSessions } from '../storage/discover.js';
+
+const execFileAsync = promisify(execFile);
 
 const projects = new Hono();
 
@@ -128,6 +133,225 @@ projects.post('/discover', async (c) => {
   }
 
   return c.json(merged);
+});
+
+// --- File Tree ---
+
+const IGNORE_DIRS = new Set([
+  'node_modules', '.git', 'dist', 'build', '.next', '.nuxt',
+  '__pycache__', '.venv', 'venv', '.tox', 'target',
+  '.idea', '.vscode', '.DS_Store', 'coverage', '.turbo',
+  '.cache', '.parcel-cache', '.svelte-kit', '.output',
+]);
+
+interface FileNode {
+  name: string;
+  path: string;
+  type: 'file' | 'directory';
+  children?: FileNode[];
+  ext?: string;
+}
+
+async function buildTree(
+  absPath: string,
+  relativePath: string,
+  depth: number,
+  maxDepth: number
+): Promise<FileNode[]> {
+  if (depth >= maxDepth) return [];
+
+  let entries;
+  try {
+    entries = await readdir(absPath, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+
+  const nodes: FileNode[] = [];
+
+  // Sort: directories first, then files, both alphabetical
+  const sorted = entries.sort((a, b) => {
+    if (a.isDirectory() && !b.isDirectory()) return -1;
+    if (!a.isDirectory() && b.isDirectory()) return 1;
+    return a.name.localeCompare(b.name);
+  });
+
+  for (const entry of sorted) {
+    if (entry.name.startsWith('.')) continue;
+    if (IGNORE_DIRS.has(entry.name)) continue;
+
+    const relPath = relativePath ? `${relativePath}/${entry.name}` : entry.name;
+
+    if (entry.isDirectory()) {
+      const children = await buildTree(join(absPath, entry.name), relPath, depth + 1, maxDepth);
+      nodes.push({ name: entry.name, path: relPath, type: 'directory', children });
+    } else {
+      const ext = extname(entry.name).slice(1);
+      nodes.push({ name: entry.name, path: relPath, type: 'file', ext: ext || undefined });
+    }
+  }
+
+  return nodes;
+}
+
+// GET /:id/files - Read project directory tree
+projects.get('/:id/files', async (c) => {
+  const id = c.req.param('id');
+  const projectList = await loadProjects();
+  const project = projectList.find((p) => p.id === id);
+
+  if (!project) return c.json({ error: 'project not found' }, 404);
+  if (!existsSync(project.path)) return c.json({ error: 'project path not found' }, 404);
+
+  const maxDepth = parseInt(c.req.query('depth') || '5');
+  const tree = await buildTree(project.path, '', 0, maxDepth);
+
+  return c.json(tree);
+});
+
+// --- Git Operations ---
+
+// GET /:id/git/status - Git status with diffs
+projects.get('/:id/git/status', async (c) => {
+  const id = c.req.param('id');
+  const projectList = await loadProjects();
+  const project = projectList.find((p) => p.id === id);
+  if (!project) return c.json({ error: 'project not found' }, 404);
+
+  try {
+    const { stdout: statusOut } = await execFileAsync('git', ['status', '--porcelain=v1'], {
+      cwd: project.path,
+      maxBuffer: 1024 * 1024,
+    });
+
+    const changes: Array<{
+      file: string;
+      status: 'modified' | 'added' | 'deleted';
+      staged: boolean;
+      additions: number;
+      deletions: number;
+      diff: string;
+    }> = [];
+
+    for (const line of statusOut.trim().split('\n').filter(Boolean)) {
+      const indexStatus = line[0];
+      const wtStatus = line[1];
+      const file = line.slice(3).trim();
+
+      // Determine if this entry has a staged component
+      const hasStaged = indexStatus !== ' ' && indexStatus !== '?';
+      const hasUnstaged = wtStatus !== ' ' && wtStatus !== '?';
+
+      // Process staged entry
+      if (hasStaged) {
+        let status: 'modified' | 'added' | 'deleted' = 'modified';
+        if (indexStatus === 'A') status = 'added';
+        else if (indexStatus === 'D') status = 'deleted';
+
+        let diff = '';
+        try {
+          const { stdout } = await execFileAsync('git', ['diff', '--cached', '--', file], {
+            cwd: project.path,
+            maxBuffer: 1024 * 1024,
+          });
+          diff = stdout;
+        } catch { /* no diff */ }
+
+        let additions = 0, deletions = 0;
+        for (const dLine of diff.split('\n')) {
+          if (dLine.startsWith('+') && !dLine.startsWith('+++')) additions++;
+          if (dLine.startsWith('-') && !dLine.startsWith('---')) deletions++;
+        }
+
+        changes.push({ file, status, staged: true, additions, deletions, diff });
+      }
+
+      // Process unstaged entry
+      if (hasUnstaged) {
+        let status: 'modified' | 'added' | 'deleted' = 'modified';
+        if (wtStatus === '?') status = 'added';
+        else if (wtStatus === 'D') status = 'deleted';
+
+        let diff = '';
+        try {
+          if (wtStatus === '?') {
+            // Untracked file
+            const { stdout } = await execFileAsync('git', ['diff', '--no-index', '--', '/dev/null', file], {
+              cwd: project.path,
+              maxBuffer: 1024 * 1024,
+            }).catch((e: { stdout?: string }) => ({ stdout: e.stdout || '' }));
+            diff = stdout;
+          } else {
+            const { stdout } = await execFileAsync('git', ['diff', '--', file], {
+              cwd: project.path,
+              maxBuffer: 1024 * 1024,
+            });
+            diff = stdout;
+          }
+        } catch { /* no diff */ }
+
+        let additions = 0, deletions = 0;
+        for (const dLine of diff.split('\n')) {
+          if (dLine.startsWith('+') && !dLine.startsWith('+++')) additions++;
+          if (dLine.startsWith('-') && !dLine.startsWith('---')) deletions++;
+        }
+
+        changes.push({ file, status, staged: false, additions, deletions, diff });
+      }
+    }
+
+    return c.json(changes);
+  } catch {
+    return c.json([], 200);
+  }
+});
+
+// POST /:id/git/stage - Stage files
+projects.post('/:id/git/stage', async (c) => {
+  const id = c.req.param('id');
+  const { files: filePaths } = await c.req.json<{ files: string[] }>();
+  const projectList = await loadProjects();
+  const project = projectList.find((p) => p.id === id);
+  if (!project) return c.json({ error: 'project not found' }, 404);
+
+  try {
+    await execFileAsync('git', ['add', '--', ...filePaths], { cwd: project.path });
+    return c.json({ ok: true });
+  } catch (error) {
+    return c.json({ error: String(error) }, 500);
+  }
+});
+
+// POST /:id/git/unstage - Unstage files
+projects.post('/:id/git/unstage', async (c) => {
+  const id = c.req.param('id');
+  const { files: filePaths } = await c.req.json<{ files: string[] }>();
+  const projectList = await loadProjects();
+  const project = projectList.find((p) => p.id === id);
+  if (!project) return c.json({ error: 'project not found' }, 404);
+
+  try {
+    await execFileAsync('git', ['restore', '--staged', '--', ...filePaths], { cwd: project.path });
+    return c.json({ ok: true });
+  } catch (error) {
+    return c.json({ error: String(error) }, 500);
+  }
+});
+
+// POST /:id/git/revert - Revert file changes
+projects.post('/:id/git/revert', async (c) => {
+  const id = c.req.param('id');
+  const { files: filePaths } = await c.req.json<{ files: string[] }>();
+  const projectList = await loadProjects();
+  const project = projectList.find((p) => p.id === id);
+  if (!project) return c.json({ error: 'project not found' }, 404);
+
+  try {
+    await execFileAsync('git', ['checkout', '--', ...filePaths], { cwd: project.path });
+    return c.json({ ok: true });
+  } catch (error) {
+    return c.json({ error: String(error) }, 500);
+  }
 });
 
 export default projects;

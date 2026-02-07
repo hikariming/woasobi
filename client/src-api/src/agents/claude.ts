@@ -146,6 +146,23 @@ function formatConversation(conversation?: ConversationMessage[]): string {
   return `## Previous Conversation\n${selected.join('\n\n')}\n\n---\n## Current Request\n`;
 }
 
+function getStatusText(sysMsg: Record<string, unknown>): string {
+  const candidates = [sysMsg.status, sysMsg.message, sysMsg.text, sysMsg.detail, sysMsg.subtype];
+  for (const value of candidates) {
+    if (typeof value === 'string' && value.trim()) return value.trim();
+  }
+  return '';
+}
+
+function isAwaitingPermission(sysMsg: Record<string, unknown>): boolean {
+  if (sysMsg.awaitingPermission === true || sysMsg.requiresPermission === true) return true;
+  const text = getStatusText(sysMsg).toLowerCase();
+  if (!text) return false;
+  const permissionMentioned = /permission|approval|confirm/.test(text);
+  const pendingMentioned = /await|wait|required|request|pending/.test(text);
+  return permissionMentioned && pendingMentioned;
+}
+
 // Active sessions for abort support
 const sessions = new Map<string, AbortController>();
 
@@ -317,6 +334,14 @@ export async function* runClaude(
           yield {
             type: 'status',
             permissionMode: sysMsg.permissionMode as string,
+            statusText: getStatusText(sysMsg),
+            awaitingPermission: isAwaitingPermission(sysMsg),
+          };
+        } else if (sysMsg.subtype === 'status') {
+          yield {
+            type: 'status',
+            statusText: getStatusText(sysMsg),
+            awaitingPermission: isAwaitingPermission(sysMsg),
           };
         }
       }

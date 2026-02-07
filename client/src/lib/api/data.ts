@@ -1,5 +1,5 @@
 import { API_BASE_URL } from '@/config/api';
-import type { Project, Thread, Message } from '@/types';
+import type { Project, Thread, Message, FileTreeNode, GitChange } from '@/types';
 
 // --- Projects ---
 
@@ -97,4 +97,47 @@ export async function fetchMessages(threadId: string): Promise<Message[]> {
   const res = await fetch(`${API_BASE_URL}/threads/${threadId}/messages`);
   if (!res.ok) throw new Error(`Failed to fetch messages: ${res.status}`);
   return res.json();
+}
+
+// --- Project Files ---
+
+export async function fetchProjectFiles(projectId: string, depth = 5): Promise<FileTreeNode[]> {
+  const res = await fetch(`${API_BASE_URL}/projects/${projectId}/files?depth=${depth}`);
+  if (!res.ok) throw new Error(`Failed to fetch files: ${res.status}`);
+  return res.json();
+}
+
+// --- Git Operations ---
+
+export async function fetchGitStatus(projectId: string): Promise<GitChange[]> {
+  const res = await fetch(`${API_BASE_URL}/projects/${projectId}/git/status`);
+  if (!res.ok) throw new Error(`Failed to fetch git status: ${res.status}`);
+  return res.json();
+}
+
+export async function stageFiles(projectId: string, files: string[]): Promise<void> {
+  const res = await fetch(`${API_BASE_URL}/projects/${projectId}/git/stage`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ files }),
+  });
+  if (!res.ok) throw new Error(`Failed to stage: ${res.status}`);
+}
+
+export async function unstageFiles(projectId: string, files: string[]): Promise<void> {
+  const res = await fetch(`${API_BASE_URL}/projects/${projectId}/git/unstage`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ files }),
+  });
+  if (!res.ok) throw new Error(`Failed to unstage: ${res.status}`);
+}
+
+export async function revertFiles(projectId: string, files: string[]): Promise<void> {
+  const res = await fetch(`${API_BASE_URL}/projects/${projectId}/git/revert`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ files }),
+  });
+  if (!res.ok) throw new Error(`Failed to revert: ${res.status}`);
 }

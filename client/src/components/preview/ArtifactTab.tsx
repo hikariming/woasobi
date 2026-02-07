@@ -1,4 +1,4 @@
-import { ExternalLink, Monitor, RefreshCw, Smartphone, Tablet } from "lucide-react";
+import { ExternalLink, FileText, Monitor, RefreshCw, Smartphone, Tablet } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { usePreviewStore } from "@/stores/preview";
 
@@ -16,10 +16,23 @@ export function ArtifactTab() {
     artifactRefreshing,
     artifactError,
     setArtifactViewport,
+    selectArtifact,
     refreshArtifact,
   } = usePreviewStore();
 
   const selected = artifacts.find((item) => item.id === selectedArtifactId) || null;
+
+  if (artifacts.length === 0) {
+    return (
+      <div className="h-full flex flex-col items-center justify-center text-center px-6">
+        <FileText size={24} className="text-muted-foreground mb-2" />
+        <p className="text-sm font-medium text-foreground">No artifacts yet</p>
+        <p className="text-xs text-muted-foreground mt-1">
+          HTML previews from agent responses will appear here.
+        </p>
+      </div>
+    );
+  }
 
   const openPreview = () => {
     if (!selected) return;
@@ -67,6 +80,25 @@ export function ArtifactTab() {
           </button>
         </div>
       </div>
+
+      {artifacts.length > 1 && (
+        <div className="flex items-center gap-1 px-3 py-1.5 border-b border-border overflow-x-auto shrink-0">
+          {artifacts.map((a) => (
+            <button
+              key={a.id}
+              onClick={() => selectArtifact(a.id)}
+              className={cn(
+                "px-2 py-1 rounded text-[10px] whitespace-nowrap transition-colors",
+                selectedArtifactId === a.id
+                  ? "bg-muted text-foreground font-medium"
+                  : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+              )}
+            >
+              {a.title}
+            </button>
+          ))}
+        </div>
+      )}
 
       <div className="flex-1 bg-muted/20 flex items-start justify-center p-4 overflow-auto">
         {!selected && (

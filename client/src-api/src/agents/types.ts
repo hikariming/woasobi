@@ -29,6 +29,8 @@ export interface AgentMessage {
   // init/status fields
   permissionMode?: string;
   slashCommands?: string[];
+  statusText?: string;
+  awaitingPermission?: boolean;
 }
 
 export interface AgentConfig {

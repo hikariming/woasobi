@@ -30,6 +30,8 @@ export interface SSEMessage {
   // init/status fields
   permissionMode?: string;
   slashCommands?: string[];
+  statusText?: string;
+  awaitingPermission?: boolean;
 }
 
 /**

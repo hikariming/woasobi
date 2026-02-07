@@ -8,11 +8,15 @@ import { StatusBar } from '@/components/layout/StatusBar';
 import { useUIStore } from '@/stores/ui';
 import { useProjectStore } from '@/stores/projects';
 import { useChatStore } from '@/stores/chat';
+import { usePreviewStore } from '@/stores/preview';
 import { cn } from '@/lib/utils';
 
 export function App() {
   const sidebarOpen = useUIStore((s) => s.sidebarOpen);
   const previewOpen = useUIStore((s) => s.previewOpen);
+  const activeThreadId = useChatStore((s) => s.activeThreadId);
+  const threads = useChatStore((s) => s.threads);
+  const projects = useProjectStore((s) => s.projects);
 
   // Initialize persistent data on app start
   useEffect(() => {
@@ -20,6 +24,20 @@ export function App() {
     useProjectStore.getState().loadProjects();
     useChatStore.getState().loadThreads();
   }, []);
+
+  // Derive active project from active thread and sync to preview store
+  useEffect(() => {
+    if (!activeThreadId) {
+      usePreviewStore.getState().setActiveProject(null, null, null);
+      return;
+    }
+    const thread = threads.find((t) => t.id === activeThreadId);
+    if (!thread) return;
+    const project = projects.find((p) => p.id === thread.projectId);
+    if (project) {
+      usePreviewStore.getState().setActiveProject(project.id, project.path, project.name);
+    }
+  }, [activeThreadId, threads, projects]);
 
   return (
     <div className="h-screen w-screen overflow-hidden bg-background text-foreground flex flex-col">

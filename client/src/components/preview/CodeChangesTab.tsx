@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronRight, MessageSquare } from "lucide-react";
+import { ChevronDown, ChevronRight, Loader2, MessageSquare } from "lucide-react";
 import { usePreviewStore } from "@/stores/preview";
 import { useUIStore } from "@/stores/ui";
 import { ChangeFileItem } from "./changes/ChangeFileItem";
@@ -8,6 +8,7 @@ export function CodeChangesTab() {
   const {
     allChanges,
     changesFilter,
+    changesLoading,
     collapsedGroups,
     expandedFiles,
     selectedFile,
@@ -29,11 +30,19 @@ export function CodeChangesTab() {
   const unstaged = filteredChanges.filter((change) => !change.staged);
   const staged = filteredChanges.filter((change) => change.staged);
 
+  if (changesLoading && allChanges.length === 0) {
+    return (
+      <div className="h-full flex items-center justify-center">
+        <Loader2 size={16} className="animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
   if (filteredChanges.length === 0) {
     return (
       <div className="h-full flex flex-col items-center justify-center text-center px-6">
-        <p className="text-sm font-medium text-foreground">No changes in this view</p>
-        <p className="text-xs text-muted-foreground mt-1">Code changes will appear here after tool actions.</p>
+        <p className="text-sm font-medium text-foreground">No changes detected</p>
+        <p className="text-xs text-muted-foreground mt-1">Git changes will appear here when files are modified.</p>
         <button
           onClick={togglePreview}
           className="mt-4 inline-flex items-center gap-2 px-3 py-1.5 text-xs rounded-md bg-muted text-foreground hover:bg-muted/80 transition-colors"
