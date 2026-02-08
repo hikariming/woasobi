@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { ChevronDown, ChevronRight, GitCommit, Loader2, MessageSquare } from "lucide-react";
+import { ChevronDown, ChevronRight, GitCommit, Loader2, MessageSquare, RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { usePreviewStore } from "@/stores/preview";
 import { useUIStore } from "@/stores/ui";
@@ -64,13 +64,23 @@ export function CodeChangesTab() {
       <div className="h-full flex flex-col items-center justify-center text-center px-6">
         <p className="text-sm font-medium text-foreground">No changes detected</p>
         <p className="text-xs text-muted-foreground mt-1">Git changes will appear here when files are modified.</p>
-        <button
-          onClick={togglePreview}
-          className="mt-4 inline-flex items-center gap-2 px-3 py-1.5 text-xs rounded-md bg-muted text-foreground hover:bg-muted/80 transition-colors"
-        >
-          <MessageSquare size={12} />
-          Back to Chat
-        </button>
+        <div className="mt-4 flex items-center gap-2">
+          <button
+            onClick={() => activeProjectId && loadGitStatus(activeProjectId)}
+            disabled={changesLoading}
+            className="inline-flex items-center gap-2 px-3 py-1.5 text-xs rounded-md bg-muted text-foreground hover:bg-muted/80 transition-colors"
+          >
+            <RefreshCw size={12} className={changesLoading ? "animate-spin" : ""} />
+            Refresh
+          </button>
+          <button
+            onClick={togglePreview}
+            className="inline-flex items-center gap-2 px-3 py-1.5 text-xs rounded-md bg-muted text-foreground hover:bg-muted/80 transition-colors"
+          >
+            <MessageSquare size={12} />
+            Back to Chat
+          </button>
+        </div>
       </div>
     );
   }
