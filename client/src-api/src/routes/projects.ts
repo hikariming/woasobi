@@ -211,6 +211,41 @@ projects.get('/:id/files', async (c) => {
 
 // --- Git Operations ---
 
+/**
+ * Parse a file path from git status --porcelain output.
+ * Handles:
+ * - Quoted paths with escaped characters (e.g. "path with spaces/file.txt")
+ * - Renamed files "old -> new" format
+ * - Regular paths
+ */
+function parseGitPath(raw: string): { file: string; origFile?: string } {
+  let s = raw.trim();
+
+  // Git quotes paths with special chars (spaces, unicode, etc.)
+  if (s.startsWith('"') && s.endsWith('"')) {
+    s = s.slice(1, -1).replace(/\\"/g, '"').replace(/\\\\/g, '\\').replace(/\\t/g, '\t').replace(/\\n/g, '\n');
+  }
+
+  // Handle rename: "old -> new" or old -> new
+  const arrowIdx = s.indexOf(' -> ');
+  if (arrowIdx !== -1) {
+    let origPart = s.slice(0, arrowIdx);
+    let newPart = s.slice(arrowIdx + 4);
+    // Each part might also be quoted
+    if (origPart.startsWith('"') && origPart.endsWith('"')) {
+      origPart = origPart.slice(1, -1).replace(/\\"/g, '"').replace(/\\\\/g, '\\');
+    }
+    if (newPart.startsWith('"') && newPart.endsWith('"')) {
+      newPart = newPart.slice(1, -1).replace(/\\"/g, '"').replace(/\\\\/g, '\\');
+    }
+    return { file: newPart, origFile: origPart };
+  }
+
+  return { file: s };
+}
+
+type GitChangeStatus = 'modified' | 'added' | 'deleted' | 'renamed' | 'untracked';
+
 // GET /:id/git/status - Git status with diffs
 projects.get('/:id/git/status', async (c) => {
   const id = c.req.param('id');
@@ -226,31 +261,39 @@ projects.get('/:id/git/status', async (c) => {
 
     const changes: Array<{
       file: string;
-      status: 'modified' | 'added' | 'deleted';
+      origFile?: string;
+      status: GitChangeStatus;
       staged: boolean;
       additions: number;
       deletions: number;
       diff: string;
     }> = [];
 
-    for (const line of statusOut.trim().split('\n').filter(Boolean)) {
+    for (const line of statusOut.trimEnd().split('\n').filter(l => l.length >= 3)) {
       const indexStatus = line[0];
       const wtStatus = line[1];
-      const file = line.slice(3).trim();
+      const rawPath = line.slice(3);
+      const parsed = parseGitPath(rawPath);
 
       // Determine if this entry has a staged component
       const hasStaged = indexStatus !== ' ' && indexStatus !== '?';
-      const hasUnstaged = wtStatus !== ' ' && wtStatus !== '?';
+      // Untracked files (??) should be shown as unstaged additions
+      const isUntracked = indexStatus === '?' && wtStatus === '?';
+      const hasUnstaged = wtStatus !== ' ' || isUntracked;
 
       // Process staged entry
       if (hasStaged) {
-        let status: 'modified' | 'added' | 'deleted' = 'modified';
+        let status: GitChangeStatus = 'modified';
         if (indexStatus === 'A') status = 'added';
         else if (indexStatus === 'D') status = 'deleted';
+        else if (indexStatus === 'R') status = 'renamed';
 
         let diff = '';
         try {
-          const { stdout } = await execFileAsync('git', ['diff', '--cached', '--', file], {
+          const diffArgs = indexStatus === 'R' && parsed.origFile
+            ? ['diff', '--cached', '--', parsed.origFile, parsed.file]
+            : ['diff', '--cached', '--', parsed.file];
+          const { stdout } = await execFileAsync('git', diffArgs, {
             cwd: project.path,
             maxBuffer: 1024 * 1024,
           });
@@ -263,31 +306,30 @@ projects.get('/:id/git/status', async (c) => {
           if (dLine.startsWith('-') && !dLine.startsWith('---')) deletions++;
         }
 
-        changes.push({ file, status, staged: true, additions, deletions, diff });
+        changes.push({
+          file: parsed.file,
+          origFile: parsed.origFile,
+          status,
+          staged: true,
+          additions,
+          deletions,
+          diff,
+        });
       }
 
-      // Process unstaged entry
-      if (hasUnstaged) {
-        let status: 'modified' | 'added' | 'deleted' = 'modified';
-        if (wtStatus === '?') status = 'added';
-        else if (wtStatus === 'D') status = 'deleted';
+      // Process unstaged / untracked entry
+      if (hasUnstaged && wtStatus !== '?') {
+        // Normal unstaged change (not untracked)
+        let status: GitChangeStatus = 'modified';
+        if (wtStatus === 'D') status = 'deleted';
 
         let diff = '';
         try {
-          if (wtStatus === '?') {
-            // Untracked file
-            const { stdout } = await execFileAsync('git', ['diff', '--no-index', '--', '/dev/null', file], {
-              cwd: project.path,
-              maxBuffer: 1024 * 1024,
-            }).catch((e: { stdout?: string }) => ({ stdout: e.stdout || '' }));
-            diff = stdout;
-          } else {
-            const { stdout } = await execFileAsync('git', ['diff', '--', file], {
-              cwd: project.path,
-              maxBuffer: 1024 * 1024,
-            });
-            diff = stdout;
-          }
+          const { stdout } = await execFileAsync('git', ['diff', '--', parsed.file], {
+            cwd: project.path,
+            maxBuffer: 1024 * 1024,
+          });
+          diff = stdout;
         } catch { /* no diff */ }
 
         let additions = 0, deletions = 0;
@@ -296,7 +338,31 @@ projects.get('/:id/git/status', async (c) => {
           if (dLine.startsWith('-') && !dLine.startsWith('---')) deletions++;
         }
 
-        changes.push({ file, status, staged: false, additions, deletions, diff });
+        changes.push({ file: parsed.file, status, staged: false, additions, deletions, diff });
+      } else if (isUntracked) {
+        // Untracked file — show as unstaged "added"
+        let diff = '';
+        let additions = 0;
+        try {
+          const result = await execFileAsync('git', ['diff', '--no-index', '--', '/dev/null', parsed.file], {
+            cwd: project.path,
+            maxBuffer: 1024 * 1024,
+          }).catch((e: { stdout?: string }) => ({ stdout: e.stdout || '' }));
+          diff = result.stdout;
+        } catch { /* no diff for untracked */ }
+
+        for (const dLine of diff.split('\n')) {
+          if (dLine.startsWith('+') && !dLine.startsWith('+++')) additions++;
+        }
+
+        changes.push({
+          file: parsed.file,
+          status: 'untracked',
+          staged: false,
+          additions,
+          deletions: 0,
+          diff,
+        });
       }
     }
 
@@ -338,7 +404,7 @@ projects.post('/:id/git/unstage', async (c) => {
   }
 });
 
-// POST /:id/git/revert - Revert file changes
+// POST /:id/git/revert - Revert/discard file changes (handles both tracked and untracked)
 projects.post('/:id/git/revert', async (c) => {
   const id = c.req.param('id');
   const { files: filePaths } = await c.req.json<{ files: string[] }>();
@@ -347,7 +413,30 @@ projects.post('/:id/git/revert', async (c) => {
   if (!project) return c.json({ error: 'project not found' }, 404);
 
   try {
-    await execFileAsync('git', ['checkout', '--', ...filePaths], { cwd: project.path });
+    // Get current status to distinguish tracked vs untracked
+    const { stdout: statusOut } = await execFileAsync('git', ['status', '--porcelain=v1'], {
+      cwd: project.path,
+      maxBuffer: 1024 * 1024,
+    });
+
+    const untrackedSet = new Set<string>();
+    for (const line of statusOut.trimEnd().split('\n').filter(l => l.length >= 3)) {
+      if (line[0] === '?' && line[1] === '?') {
+        const parsed = parseGitPath(line.slice(3));
+        untrackedSet.add(parsed.file);
+      }
+    }
+
+    const trackedFiles = filePaths.filter((fp) => !untrackedSet.has(fp));
+    const untrackedFiles = filePaths.filter((fp) => untrackedSet.has(fp));
+
+    if (trackedFiles.length > 0) {
+      await execFileAsync('git', ['checkout', '--', ...trackedFiles], { cwd: project.path });
+    }
+    if (untrackedFiles.length > 0) {
+      await execFileAsync('git', ['clean', '-f', '--', ...untrackedFiles], { cwd: project.path });
+    }
+
     return c.json({ ok: true });
   } catch (error) {
     return c.json({ error: String(error) }, 500);
@@ -373,8 +462,15 @@ projects.post('/:id/git/commit', async (c) => {
     let msg: string;
     if (error instanceof Error) {
       const e = error as Error & { stderr?: string; stdout?: string };
-      // git may output the real error to stderr or stdout
-      msg = [e.stderr, e.stdout].filter(Boolean).join('\n').trim() || e.message;
+      const raw = [e.stderr, e.stdout].filter(Boolean).join('\n').trim() || e.message;
+      // Provide cleaner error messages for common git commit failures
+      if (raw.includes('nothing to commit') || raw.includes('no changes added to commit')) {
+        msg = 'Nothing to commit — no staged changes found.';
+      } else if (raw.includes('Changes not staged for commit')) {
+        msg = 'No staged changes to commit. Stage files first or use "Commit All".';
+      } else {
+        msg = raw;
+      }
     } else {
       msg = String(error);
     }
@@ -435,6 +531,52 @@ projects.post('/:id/git/checkout', async (c) => {
       msg = String(error);
     }
     return c.json({ error: msg }, 500);
+  }
+});
+
+// POST /:id/git/stage-all - Stage all changes
+projects.post('/:id/git/stage-all', async (c) => {
+  const id = c.req.param('id');
+  const projectList = await loadProjects();
+  const project = projectList.find((p) => p.id === id);
+  if (!project) return c.json({ error: 'project not found' }, 404);
+
+  try {
+    await execFileAsync('git', ['add', '-A'], { cwd: project.path });
+    return c.json({ ok: true });
+  } catch (error) {
+    return c.json({ error: String(error) }, 500);
+  }
+});
+
+// POST /:id/git/unstage-all - Unstage all staged changes
+projects.post('/:id/git/unstage-all', async (c) => {
+  const id = c.req.param('id');
+  const projectList = await loadProjects();
+  const project = projectList.find((p) => p.id === id);
+  if (!project) return c.json({ error: 'project not found' }, 404);
+
+  try {
+    await execFileAsync('git', ['restore', '--staged', '.'], { cwd: project.path });
+    return c.json({ ok: true });
+  } catch (error) {
+    return c.json({ error: String(error) }, 500);
+  }
+});
+
+// POST /:id/git/discard-all - Discard all unstaged changes (tracked + untracked)
+projects.post('/:id/git/discard-all', async (c) => {
+  const id = c.req.param('id');
+  const projectList = await loadProjects();
+  const project = projectList.find((p) => p.id === id);
+  if (!project) return c.json({ error: 'project not found' }, 404);
+
+  try {
+    await execFileAsync('git', ['checkout', '--', '.'], { cwd: project.path });
+    await execFileAsync('git', ['clean', '-fd'], { cwd: project.path });
+    return c.json({ ok: true });
+  } catch (error) {
+    return c.json({ error: String(error) }, 500);
   }
 });
 

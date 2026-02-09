@@ -51,10 +51,11 @@ export interface Message {
   attachedFiles?: string[];
 }
 
-export type FileStatus = "modified" | "added" | "deleted";
+export type FileStatus = "modified" | "added" | "deleted" | "renamed" | "untracked";
 
 export interface GitChange {
   file: string;
+  origFile?: string;
   status: FileStatus;
   staged: boolean;
   additions: number;

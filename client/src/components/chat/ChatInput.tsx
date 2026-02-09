@@ -18,6 +18,7 @@ export function ChatInput() {
   const [showPermDropdown, setShowPermDropdown] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const isComposingRef = useRef(false);
 
   // Slash command state
   const [showSlashMenu, setShowSlashMenu] = useState(false);
@@ -126,6 +127,15 @@ export function ChatInput() {
   }, [text]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    const nativeEvent = e.nativeEvent as KeyboardEvent & { keyCode?: number };
+    const isImeComposing =
+      isComposingRef.current || nativeEvent.isComposing || nativeEvent.keyCode === 229;
+
+    // While IME is composing, Enter should only confirm composition and never send/choose slash command.
+    if (isImeComposing && e.key === 'Enter') {
+      return;
+    }
+
     // Slash menu navigation
     if (showSlashMenu && filteredCommands.length > 0) {
       if (e.key === 'ArrowDown') {
@@ -154,6 +164,14 @@ export function ChatInput() {
       e.preventDefault();
       handleSend();
     }
+  };
+
+  const handleCompositionStart = () => {
+    isComposingRef.current = true;
+  };
+
+  const handleCompositionEnd = () => {
+    isComposingRef.current = false;
   };
 
   const handleInput = () => {
@@ -293,6 +311,8 @@ export function ChatInput() {
           value={text}
           onChange={handleTextChange}
           onKeyDown={handleKeyDown}
+          onCompositionStart={handleCompositionStart}
+          onCompositionEnd={handleCompositionEnd}
           onInput={handleInput}
           placeholder="Type a message... (/ for commands, Shift+Enter for newline)"
           rows={1}

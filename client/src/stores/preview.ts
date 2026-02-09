@@ -19,9 +19,10 @@ import {
   commitChanges,
   fetchBranches,
   checkoutBranch,
+  stageAllFiles,
+  unstageAllFiles,
+  discardAllChanges,
 } from "@/lib/api/data";
-
-type ChangesFilter = "all" | "staged" | "unstaged";
 
 interface PreviewStore {
   // Active project context
@@ -31,7 +32,6 @@ interface PreviewStore {
 
   // Git changes
   allChanges: GitChange[];
-  changesFilter: ChangesFilter;
   changesLoading: boolean;
   commitMessage: string;
   commitLoading: boolean;
@@ -75,15 +75,19 @@ interface PreviewStore {
   setActiveProject: (id: string | null, path: string | null, name: string | null) => void;
 
   // Changes actions
-  setChangesFilter: (filter: ChangesFilter) => void;
   toggleChangeGroup: (group: "staged" | "unstaged") => void;
   toggleFileExpanded: (path: string) => void;
-  toggleStage: (path: string) => void;
+  toggleStage: (path: string, currentlyStaged?: boolean) => void;
   revertChange: (path: string) => void;
+  discardChange: (path: string) => void;
+  stageAll: () => Promise<void>;
+  unstageAll: () => Promise<void>;
+  discardAll: () => Promise<void>;
   selectFile: (path: string, source: PreviewFileSelectionSource) => void;
-  loadGitStatus: (projectId: string) => Promise<void>;
+  loadGitStatus: (projectId: string, force?: boolean) => Promise<void>;
   setCommitMessage: (msg: string) => void;
   commitStaged: () => Promise<{ ok: boolean; error?: string }>;
+  commitAll: () => Promise<{ ok: boolean; error?: string }>;
 
   // Branch actions
   loadBranches: (projectId: string) => Promise<void>;
@@ -131,7 +135,6 @@ export const usePreviewStore = create<PreviewStore>((set, get) => ({
 
   // Git changes — start empty
   allChanges: [],
-  changesFilter: "all",
   changesLoading: false,
   commitMessage: "",
   commitLoading: false,
@@ -184,7 +187,6 @@ export const usePreviewStore = create<PreviewStore>((set, get) => ({
   },
 
   // --- Changes ---
-  setChangesFilter: (filter) => set({ changesFilter: filter }),
   toggleChangeGroup: (group) =>
     set((state) => ({
       collapsedGroups: {
@@ -198,10 +200,12 @@ export const usePreviewStore = create<PreviewStore>((set, get) => ({
         ? state.expandedFiles.filter((item) => item !== path)
         : [...state.expandedFiles, path],
     })),
-  toggleStage: async (path) => {
+  toggleStage: async (path, currentlyStaged?) => {
     const { allChanges, activeProjectId } = get();
     if (!activeProjectId) return;
-    const change = allChanges.find((c) => c.file === path);
+    const change = currentlyStaged !== undefined
+      ? allChanges.find((c) => c.file === path && c.staged === currentlyStaged)
+      : allChanges.find((c) => c.file === path);
     if (!change) return;
     try {
       if (change.staged) {
@@ -209,20 +213,60 @@ export const usePreviewStore = create<PreviewStore>((set, get) => ({
       } else {
         await stageFiles(activeProjectId, [path]);
       }
-      await get().loadGitStatus(activeProjectId);
     } catch {
-      // Failed
+      // Operation failed — still refresh below
     }
+    await get().loadGitStatus(activeProjectId, true);
   },
   revertChange: async (path) => {
     const { activeProjectId } = get();
     if (!activeProjectId) return;
     try {
       await revertFiles(activeProjectId, [path]);
-      await get().loadGitStatus(activeProjectId);
     } catch {
-      // Failed
+      // Operation failed — still refresh below
     }
+    await get().loadGitStatus(activeProjectId, true);
+  },
+  discardChange: async (path) => {
+    const { activeProjectId } = get();
+    if (!activeProjectId) return;
+    try {
+      await revertFiles(activeProjectId, [path]);
+    } catch {
+      // Operation failed — still refresh below
+    }
+    await get().loadGitStatus(activeProjectId, true);
+  },
+  stageAll: async () => {
+    const { activeProjectId } = get();
+    if (!activeProjectId) return;
+    try {
+      await stageAllFiles(activeProjectId);
+    } catch {
+      // Operation failed — still refresh below
+    }
+    await get().loadGitStatus(activeProjectId, true);
+  },
+  unstageAll: async () => {
+    const { activeProjectId } = get();
+    if (!activeProjectId) return;
+    try {
+      await unstageAllFiles(activeProjectId);
+    } catch {
+      // Operation failed — still refresh below
+    }
+    await get().loadGitStatus(activeProjectId, true);
+  },
+  discardAll: async () => {
+    const { activeProjectId } = get();
+    if (!activeProjectId) return;
+    try {
+      await discardAllChanges(activeProjectId);
+    } catch {
+      // Operation failed — still refresh below
+    }
+    await get().loadGitStatus(activeProjectId, true);
   },
   selectFile: (path, source) =>
     set((state) => {
@@ -238,9 +282,9 @@ export const usePreviewStore = create<PreviewStore>((set, get) => ({
         expandedDirs: Array.from(new Set([...state.expandedDirs, ...dirsToOpen])),
       };
     }),
-  loadGitStatus: async (projectId) => {
-    // Guard against concurrent requests (polling overlap)
-    if (_gitStatusPending) return;
+  loadGitStatus: async (projectId, force?) => {
+    // Guard against concurrent requests (polling overlap), but allow force refresh after actions
+    if (_gitStatusPending && !force) return;
     _gitStatusPending = true;
     // Only show loading spinner on first load
     if (get().allChanges.length === 0) set({ changesLoading: true });
@@ -263,11 +307,32 @@ export const usePreviewStore = create<PreviewStore>((set, get) => ({
     try {
       await commitChanges(activeProjectId, commitMessage.trim());
       set({ commitMessage: "", commitLoading: false });
-      // Refresh git status after commit
-      await get().loadGitStatus(activeProjectId);
+      await get().loadGitStatus(activeProjectId, true);
       return { ok: true };
     } catch (e) {
       set({ commitLoading: false });
+      // Refresh git status on failure — UI may be showing stale staged/unstaged state
+      await get().loadGitStatus(activeProjectId, true);
+      return { ok: false, error: e instanceof Error ? e.message : String(e) };
+    }
+  },
+  commitAll: async () => {
+    const { activeProjectId, commitMessage } = get();
+    if (!activeProjectId || !commitMessage.trim()) {
+      return { ok: false, error: "No project or empty message" };
+    }
+    set({ commitLoading: true });
+    try {
+      // Stage all then commit (same as VS Code behavior when nothing staged)
+      await stageAllFiles(activeProjectId);
+      await commitChanges(activeProjectId, commitMessage.trim());
+      set({ commitMessage: "", commitLoading: false });
+      await get().loadGitStatus(activeProjectId, true);
+      return { ok: true };
+    } catch (e) {
+      set({ commitLoading: false });
+      // Refresh git status on failure
+      await get().loadGitStatus(activeProjectId, true);
       return { ok: false, error: e instanceof Error ? e.message : String(e) };
     }
   },
@@ -291,7 +356,7 @@ export const usePreviewStore = create<PreviewStore>((set, get) => ({
       // Refresh file tree and git status after branch switch
       await Promise.all([
         get().loadFiles(activeProjectId),
-        get().loadGitStatus(activeProjectId),
+        get().loadGitStatus(activeProjectId, true),
       ]);
       return { ok: true };
     } catch (e) {

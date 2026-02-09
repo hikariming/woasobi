@@ -142,6 +142,21 @@ export async function revertFiles(projectId: string, files: string[]): Promise<v
   if (!res.ok) throw new Error(`Failed to revert: ${res.status}`);
 }
 
+export async function stageAllFiles(projectId: string): Promise<void> {
+  const res = await fetch(`${API_BASE_URL}/projects/${projectId}/git/stage-all`, { method: 'POST' });
+  if (!res.ok) throw new Error(`Failed to stage all: ${res.status}`);
+}
+
+export async function unstageAllFiles(projectId: string): Promise<void> {
+  const res = await fetch(`${API_BASE_URL}/projects/${projectId}/git/unstage-all`, { method: 'POST' });
+  if (!res.ok) throw new Error(`Failed to unstage all: ${res.status}`);
+}
+
+export async function discardAllChanges(projectId: string): Promise<void> {
+  const res = await fetch(`${API_BASE_URL}/projects/${projectId}/git/discard-all`, { method: 'POST' });
+  if (!res.ok) throw new Error(`Failed to discard all: ${res.status}`);
+}
+
 export async function commitChanges(projectId: string, message: string): Promise<{ ok: boolean; output: string }> {
   const res = await fetch(`${API_BASE_URL}/projects/${projectId}/git/commit`, {
     method: 'POST',

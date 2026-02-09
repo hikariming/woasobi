@@ -161,6 +161,7 @@ export function Sidebar() {
             onNewThread={(pid) => createThread(pid)}
             onContextMenu={(e, type, id) => {
               e.preventDefault();
+              e.stopPropagation();
               setContextMenu({ type, id, x: e.clientX, y: e.clientY });
             }}
           />
@@ -175,6 +176,7 @@ export function Sidebar() {
             onNewThread={() => {}}
             onContextMenu={(e, type, id) => {
               e.preventDefault();
+              e.stopPropagation();
               setContextMenu({ type, id, x: e.clientX, y: e.clientY });
             }}
           />

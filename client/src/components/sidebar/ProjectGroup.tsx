@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ChevronDown, FolderOpen, Plus, Pin } from "lucide-react";
+import { ChevronDown, FolderOpen, SquarePen, Ellipsis, Pin } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { Project, Thread } from "@/types";
 import type { ThreadRuntimeStatus } from "@/stores/chat";
@@ -25,6 +25,7 @@ export function ProjectGroup({
   onNewThread,
 }: ProjectGroupProps) {
   const [open, setOpen] = useState(true);
+  const [hovered, setHovered] = useState(false);
 
   // Check if any thread in this group has a running/permission status
   const hasActiveThread = threads.some((t) => {
@@ -33,19 +34,19 @@ export function ProjectGroup({
   });
 
   return (
-    <div className="mb-1">
+    <div className="mb-1" onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
       <div className="flex items-center">
         <button
           onClick={() => setOpen(!open)}
           onContextMenu={(e) => project.id !== "__orphan" && onContextMenu(e, "project", project.id)}
-          className="text-muted-foreground hover:text-foreground flex flex-1 items-center gap-1.5 px-1.5 py-1 text-xs font-medium"
+          className="text-muted-foreground hover:text-foreground flex flex-1 items-center gap-1.5 px-1.5 py-1 text-xs font-medium min-w-0"
         >
-          <ChevronDown className={cn("size-3 transition-transform", !open && "-rotate-90")} />
-          <FolderOpen className="size-3" />
+          <ChevronDown className={cn("size-3 shrink-0 transition-transform", !open && "-rotate-90")} />
+          <FolderOpen className="size-3 shrink-0" />
           <span className="truncate">{project.name}</span>
           {project.pinned && <Pin className="size-2.5 text-primary shrink-0" />}
           {project.source && project.source !== "manual" && (
-            <span className="ml-1 text-[9px] text-muted-foreground/60">
+            <span className="ml-1 text-[9px] text-muted-foreground/60 shrink-0">
               {project.source === "claude+codex" ? "CC+CX" : project.source === "claude" ? "CC" : "CX"}
             </span>
           )}
@@ -55,16 +56,22 @@ export function ProjectGroup({
           )}
         </button>
         {project.id !== "__orphan" && (
-          <button
-            onClick={() => onNewThread(project.id)}
-            title="New thread in this project"
-            className="text-muted-foreground hover:text-foreground p-0.5 mr-1 rounded opacity-0 group-hover:opacity-100 hover:!opacity-100"
-            style={{ opacity: undefined }}
-            onMouseEnter={(e) => (e.currentTarget.style.opacity = "1")}
-            onMouseLeave={(e) => (e.currentTarget.style.opacity = "")}
-          >
-            <Plus className="size-3" />
-          </button>
+          <div className={cn("flex items-center gap-0.5 mr-1 shrink-0 transition-opacity", hovered ? "opacity-100" : "opacity-0")}>
+            <button
+              onClick={() => onNewThread(project.id)}
+              title="New thread"
+              className="text-muted-foreground hover:text-foreground p-0.5 rounded hover:bg-accent"
+            >
+              <SquarePen className="size-3" />
+            </button>
+            <button
+              onClick={(e) => onContextMenu(e, "project", project.id)}
+              title="More actions"
+              className="text-muted-foreground hover:text-foreground p-0.5 rounded hover:bg-accent"
+            >
+              <Ellipsis className="size-3" />
+            </button>
+          </div>
         )}
       </div>
       {open && (

@@ -1,86 +1,97 @@
-import { Check, FileCode, Minus, Plus, RotateCcw } from "lucide-react";
+import { Minus, Plus, Undo2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { GitChange } from "@/types";
-import { DiffView } from "./DiffView";
 
 interface ChangeFileItemProps {
   change: GitChange;
-  expanded: boolean;
   selected: boolean;
-  onToggleExpand: () => void;
-  onToggleStage: () => void;
-  onRevert: () => void;
   onSelect: () => void;
+  onToggleStage: () => void;
+  onDiscard: () => void;
+  onContextMenu: (e: React.MouseEvent) => void;
+}
+
+function getStatusDisplay(status: string): { letter: string; colorClass: string } {
+  switch (status) {
+    case "modified":  return { letter: "M", colorClass: "text-amber-400" };
+    case "added":     return { letter: "A", colorClass: "text-green-400" };
+    case "deleted":   return { letter: "D", colorClass: "text-red-400" };
+    case "renamed":   return { letter: "R", colorClass: "text-blue-400" };
+    case "untracked": return { letter: "U", colorClass: "text-green-500" };
+    default:          return { letter: "?", colorClass: "text-muted-foreground" };
+  }
+}
+
+function splitPath(filePath: string): { filename: string; dir: string } {
+  const lastSlash = filePath.lastIndexOf("/");
+  if (lastSlash === -1) return { filename: filePath, dir: "" };
+  return {
+    filename: filePath.slice(lastSlash + 1),
+    dir: filePath.slice(0, lastSlash),
+  };
 }
 
 export function ChangeFileItem({
   change,
-  expanded,
   selected,
-  onToggleExpand,
-  onToggleStage,
-  onRevert,
   onSelect,
+  onToggleStage,
+  onDiscard,
+  onContextMenu,
 }: ChangeFileItemProps) {
-  return (
-    <div className={cn("rounded-lg border overflow-hidden", selected ? "border-primary/60" : "border-border")}>
-      <div className="flex items-center">
-        <button
-          onClick={() => {
-            onToggleExpand();
-            onSelect();
-          }}
-          className="flex-1 px-3 py-2 flex items-center gap-2 text-xs hover:bg-muted/30 transition-colors"
-        >
-          <FileCode
-            size={13}
-            className={cn(
-              change.status === "added"
-                ? "text-green-400"
-                : change.status === "deleted"
-                  ? "text-red-400"
-                  : "text-yellow-400"
-            )}
-          />
-          <span className="font-mono text-foreground truncate flex-1 text-left">{change.file}</span>
-          <div className="flex items-center gap-2 shrink-0">
-            {change.staged && (
-              <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-500/10 text-green-400">staged</span>
-            )}
-            <span className="flex items-center gap-0.5 text-green-400 text-[11px]">
-              <Plus size={10} />
-              {change.additions}
-            </span>
-            <span className="flex items-center gap-0.5 text-red-400 text-[11px]">
-              <Minus size={10} />
-              {change.deletions}
-            </span>
-          </div>
-        </button>
+  const { letter, colorClass } = getStatusDisplay(change.status);
+  const { filename, dir } = splitPath(change.file);
 
-        <div className="pr-2 flex items-center gap-1">
-          <button
-            onClick={onToggleStage}
-            className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
-            title={change.staged ? "Unstage" : "Stage"}
-          >
-            <Check size={12} />
-          </button>
-          <button
-            onClick={onRevert}
-            className="p-1 rounded text-muted-foreground hover:text-red-400 hover:bg-muted/50 transition-colors"
-            title="Revert changes"
-          >
-            <RotateCcw size={12} />
-          </button>
-        </div>
+  return (
+    <div
+      className={cn(
+        "group flex items-center h-[22px] pl-6 pr-2 cursor-pointer text-[12px]",
+        selected
+          ? "bg-accent text-accent-foreground"
+          : "hover:bg-muted/40"
+      )}
+      onClick={onSelect}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        onContextMenu(e);
+      }}
+    >
+      {/* Filename */}
+      <span className="truncate text-foreground text-[13px]">{filename}</span>
+
+      {/* Parent directory */}
+      {dir && (
+        <span className="ml-1.5 text-muted-foreground/60 truncate text-[11px] shrink-0">
+          {dir}
+        </span>
+      )}
+
+      {/* Spacer */}
+      <div className="flex-1 min-w-2" />
+
+      {/* Hover actions */}
+      <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+        <button
+          onClick={(e) => { e.stopPropagation(); onToggleStage(); }}
+          className="p-0.5 rounded text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
+          title={change.staged ? "Unstage Changes" : "Stage Changes"}
+        >
+          {change.staged ? <Minus size={14} /> : <Plus size={14} />}
+        </button>
+        <button
+          onClick={(e) => { e.stopPropagation(); onDiscard(); }}
+          className="p-0.5 rounded text-muted-foreground hover:text-red-400 hover:bg-muted/50 transition-colors"
+          title="Discard Changes"
+        >
+          <Undo2 size={14} />
+        </button>
       </div>
 
-      {expanded && (
-        <div className="border-t border-border bg-background/50">
-          <DiffView diff={change.diff} />
-        </div>
-      )}
+      {/* Status letter */}
+      <span className={cn("w-5 text-center text-[11px] font-medium shrink-0 ml-1", colorClass)}>
+        {letter}
+      </span>
     </div>
   );
 }
