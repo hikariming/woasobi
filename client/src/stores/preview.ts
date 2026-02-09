@@ -309,7 +309,22 @@ export const usePreviewStore = create<PreviewStore>((set, get) => ({
     if (get().allChanges.length === 0) set({ changesLoading: true });
     try {
       const changes = await fetchGitStatus(projectId);
-      set({ allChanges: changes, changesLoading: false });
+      // Only update store if data actually changed — avoids unnecessary re-renders from polling
+      const prev = get().allChanges;
+      const changed =
+        changes.length !== prev.length ||
+        changes.some((c, i) =>
+          c.file !== prev[i].file ||
+          c.staged !== prev[i].staged ||
+          c.status !== prev[i].status ||
+          c.additions !== prev[i].additions ||
+          c.deletions !== prev[i].deletions
+        );
+      if (changed) {
+        set({ allChanges: changes, changesLoading: false });
+      } else if (get().changesLoading) {
+        set({ changesLoading: false });
+      }
     } catch {
       set({ changesLoading: false });
     } finally {
@@ -393,7 +408,10 @@ export const usePreviewStore = create<PreviewStore>((set, get) => ({
   loadSyncStatus: async (projectId) => {
     try {
       const { ahead, behind } = await fetchSyncStatus(projectId);
-      set({ aheadCount: ahead, behindCount: behind });
+      const { aheadCount, behindCount } = get();
+      if (ahead !== aheadCount || behind !== behindCount) {
+        set({ aheadCount: ahead, behindCount: behind });
+      }
     } catch {
       // No upstream or fetch failed — keep current counts
     }
