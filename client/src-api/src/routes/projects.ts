@@ -580,4 +580,90 @@ projects.post('/:id/git/discard-all', async (c) => {
   }
 });
 
+// GET /:id/git/sync-status - Ahead/behind counts relative to upstream
+projects.get('/:id/git/sync-status', async (c) => {
+  const id = c.req.param('id');
+  const projectList = await loadProjects();
+  const project = projectList.find((p) => p.id === id);
+  if (!project) return c.json({ error: 'project not found' }, 404);
+
+  try {
+    const { stdout } = await execFileAsync(
+      'git', ['rev-list', '--left-right', '--count', '@{upstream}...HEAD'],
+      { cwd: project.path },
+    );
+    const parts = stdout.trim().split(/\s+/);
+    const behind = parseInt(parts[0]) || 0;
+    const ahead = parseInt(parts[1]) || 0;
+    return c.json({ ahead, behind });
+  } catch {
+    // No upstream configured or other error
+    return c.json({ ahead: 0, behind: 0 });
+  }
+});
+
+// POST /:id/git/push - Push to remote
+projects.post('/:id/git/push', async (c) => {
+  const id = c.req.param('id');
+  const projectList = await loadProjects();
+  const project = projectList.find((p) => p.id === id);
+  if (!project) return c.json({ error: 'project not found' }, 404);
+
+  try {
+    const { stdout } = await execFileAsync('git', ['push'], {
+      cwd: project.path,
+      maxBuffer: 1024 * 1024,
+      timeout: 30000,
+    });
+    return c.json({ ok: true, output: stdout.trim() });
+  } catch (error) {
+    let msg: string;
+    if (error instanceof Error) {
+      const e = error as Error & { stderr?: string; stdout?: string };
+      const raw = [e.stderr, e.stdout].filter(Boolean).join('\n').trim() || e.message;
+      if (raw.includes('no upstream branch') || raw.includes('has no upstream')) {
+        msg = 'No upstream branch configured. Run "git push -u origin <branch>" first.';
+      } else if (raw.includes('rejected')) {
+        msg = 'Push rejected — remote has changes. Pull first.';
+      } else {
+        msg = raw;
+      }
+    } else {
+      msg = String(error);
+    }
+    return c.json({ error: msg }, 500);
+  }
+});
+
+// POST /:id/git/pull - Pull from remote
+projects.post('/:id/git/pull', async (c) => {
+  const id = c.req.param('id');
+  const projectList = await loadProjects();
+  const project = projectList.find((p) => p.id === id);
+  if (!project) return c.json({ error: 'project not found' }, 404);
+
+  try {
+    const { stdout } = await execFileAsync('git', ['pull'], {
+      cwd: project.path,
+      maxBuffer: 1024 * 1024,
+      timeout: 30000,
+    });
+    return c.json({ ok: true, output: stdout.trim() });
+  } catch (error) {
+    let msg: string;
+    if (error instanceof Error) {
+      const e = error as Error & { stderr?: string; stdout?: string };
+      const raw = [e.stderr, e.stdout].filter(Boolean).join('\n').trim() || e.message;
+      if (raw.includes('CONFLICT') || raw.includes('merge conflict')) {
+        msg = 'Pull failed — merge conflicts detected. Resolve conflicts manually.';
+      } else {
+        msg = raw;
+      }
+    } else {
+      msg = String(error);
+    }
+    return c.json({ error: msg }, 500);
+  }
+});
+
 export default projects;

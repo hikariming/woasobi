@@ -31,6 +31,10 @@ export function CodeChangesTab() {
     selectedFile,
     activeProjectId,
     activeProjectPath,
+    currentBranch,
+    aheadCount,
+    behindCount,
+    syncLoading,
     toggleChangeGroup,
     toggleStage,
     discardChange,
@@ -39,6 +43,9 @@ export function CodeChangesTab() {
     commitStaged,
     commitAll,
     loadGitStatus,
+    loadSyncStatus,
+    syncPush,
+    syncPull,
     stageAll,
     unstageAll,
     discardAll,
@@ -60,14 +67,15 @@ export function CodeChangesTab() {
     return () => window.removeEventListener("click", handler);
   }, []);
 
-  // Poll git status
+  // Poll git status + sync status
   useEffect(() => {
     if (!activeProjectId) return;
     const timer = setInterval(() => {
       loadGitStatus(activeProjectId);
+      loadSyncStatus(activeProjectId);
     }, GIT_POLL_INTERVAL);
     return () => clearInterval(timer);
-  }, [activeProjectId, loadGitStatus]);
+  }, [activeProjectId, loadGitStatus, loadSyncStatus]);
 
   const staged = allChanges.filter((c) => c.staged);
   const unstaged = allChanges.filter((c) => !c.staged);
@@ -82,6 +90,24 @@ export function CodeChangesTab() {
     const result = hasStaged ? await commitStaged() : await commitAll();
     if (!result.ok && result.error) {
       setCommitError(result.error);
+    }
+  };
+
+  const handleSync = async () => {
+    setCommitError(null);
+    // Pull first if behind, then push if ahead (like VS Code sync)
+    if (behindCount > 0) {
+      const pullResult = await syncPull();
+      if (!pullResult.ok && pullResult.error) {
+        setCommitError(pullResult.error);
+        return;
+      }
+    }
+    if (aheadCount > 0 || behindCount === 0) {
+      const pushResult = await syncPush();
+      if (!pushResult.ok && pushResult.error) {
+        setCommitError(pushResult.error);
+      }
     }
   };
 
@@ -132,6 +158,11 @@ export function CodeChangesTab() {
       <ChangeHeader
         loading={changesLoading}
         onRefresh={() => activeProjectId && loadGitStatus(activeProjectId)}
+        currentBranch={currentBranch}
+        aheadCount={aheadCount}
+        behindCount={behindCount}
+        syncLoading={syncLoading}
+        onSync={handleSync}
       />
 
       {/* Commit Section - always visible */}

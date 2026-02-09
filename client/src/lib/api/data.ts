@@ -188,5 +188,31 @@ export async function checkoutBranch(projectId: string, branch: string): Promise
   }
 }
 
+// --- Git Sync ---
+
+export async function fetchSyncStatus(projectId: string): Promise<{ ahead: number; behind: number }> {
+  const res = await fetch(`${API_BASE_URL}/projects/${projectId}/git/sync-status`);
+  if (!res.ok) throw new Error(`Failed to fetch sync status: ${res.status}`);
+  return res.json();
+}
+
+export async function gitPush(projectId: string): Promise<{ ok: boolean; output: string }> {
+  const res = await fetch(`${API_BASE_URL}/projects/${projectId}/git/push`, { method: 'POST' });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || `Failed to push: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function gitPull(projectId: string): Promise<{ ok: boolean; output: string }> {
+  const res = await fetch(`${API_BASE_URL}/projects/${projectId}/git/pull`, { method: 'POST' });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || `Failed to pull: ${res.status}`);
+  }
+  return res.json();
+}
+
 // --- Terminal ---
 // Terminal now uses WebSocket (via XTerminal component) instead of REST endpoints.

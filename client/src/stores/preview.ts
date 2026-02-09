@@ -22,6 +22,9 @@ import {
   stageAllFiles,
   unstageAllFiles,
   discardAllChanges,
+  fetchSyncStatus,
+  gitPush,
+  gitPull,
 } from "@/lib/api/data";
 
 interface PreviewStore {
@@ -43,6 +46,11 @@ interface PreviewStore {
   currentBranch: string;
   branches: string[];
   branchesLoading: boolean;
+
+  // Git sync
+  aheadCount: number;
+  behindCount: number;
+  syncLoading: boolean;
 
   // Artifacts
   artifacts: ArtifactItem[];
@@ -92,6 +100,11 @@ interface PreviewStore {
   // Branch actions
   loadBranches: (projectId: string) => Promise<void>;
   switchBranch: (branch: string) => Promise<{ ok: boolean; error?: string }>;
+
+  // Sync actions
+  loadSyncStatus: (projectId: string) => Promise<void>;
+  syncPush: () => Promise<{ ok: boolean; error?: string }>;
+  syncPull: () => Promise<{ ok: boolean; error?: string }>;
 
   // Artifact actions
   setArtifactViewport: (mode: ArtifactViewport) => void;
@@ -147,6 +160,11 @@ export const usePreviewStore = create<PreviewStore>((set, get) => ({
   branches: [],
   branchesLoading: false,
 
+  // Git sync
+  aheadCount: 0,
+  behindCount: 0,
+  syncLoading: false,
+
   // Artifacts — start empty
   artifacts: [],
   selectedArtifactId: null,
@@ -183,6 +201,7 @@ export const usePreviewStore = create<PreviewStore>((set, get) => ({
       get().loadFiles(id);
       get().loadGitStatus(id);
       get().loadBranches(id);
+      get().loadSyncStatus(id);
     }
   },
 
@@ -307,7 +326,10 @@ export const usePreviewStore = create<PreviewStore>((set, get) => ({
     try {
       await commitChanges(activeProjectId, commitMessage.trim());
       set({ commitMessage: "", commitLoading: false });
-      await get().loadGitStatus(activeProjectId, true);
+      await Promise.all([
+        get().loadGitStatus(activeProjectId, true),
+        get().loadSyncStatus(activeProjectId),
+      ]);
       return { ok: true };
     } catch (e) {
       set({ commitLoading: false });
@@ -327,7 +349,10 @@ export const usePreviewStore = create<PreviewStore>((set, get) => ({
       await stageAllFiles(activeProjectId);
       await commitChanges(activeProjectId, commitMessage.trim());
       set({ commitMessage: "", commitLoading: false });
-      await get().loadGitStatus(activeProjectId, true);
+      await Promise.all([
+        get().loadGitStatus(activeProjectId, true),
+        get().loadSyncStatus(activeProjectId),
+      ]);
       return { ok: true };
     } catch (e) {
       set({ commitLoading: false });
@@ -360,6 +385,47 @@ export const usePreviewStore = create<PreviewStore>((set, get) => ({
       ]);
       return { ok: true };
     } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : String(e) };
+    }
+  },
+
+  // --- Sync ---
+  loadSyncStatus: async (projectId) => {
+    try {
+      const { ahead, behind } = await fetchSyncStatus(projectId);
+      set({ aheadCount: ahead, behindCount: behind });
+    } catch {
+      // No upstream or fetch failed — keep current counts
+    }
+  },
+  syncPush: async () => {
+    const { activeProjectId } = get();
+    if (!activeProjectId) return { ok: false, error: "No active project" };
+    set({ syncLoading: true });
+    try {
+      await gitPush(activeProjectId);
+      await get().loadSyncStatus(activeProjectId);
+      set({ syncLoading: false });
+      return { ok: true };
+    } catch (e) {
+      set({ syncLoading: false });
+      return { ok: false, error: e instanceof Error ? e.message : String(e) };
+    }
+  },
+  syncPull: async () => {
+    const { activeProjectId } = get();
+    if (!activeProjectId) return { ok: false, error: "No active project" };
+    set({ syncLoading: true });
+    try {
+      await gitPull(activeProjectId);
+      await Promise.all([
+        get().loadSyncStatus(activeProjectId),
+        get().loadGitStatus(activeProjectId, true),
+      ]);
+      set({ syncLoading: false });
+      return { ok: true };
+    } catch (e) {
+      set({ syncLoading: false });
       return { ok: false, error: e instanceof Error ? e.message : String(e) };
     }
   },
