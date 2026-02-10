@@ -102,7 +102,7 @@ export async function* runCodex(
 
   // Spawn codex process in JSON event mode so we can extract token usage reliably.
   const proc = spawn(codexPath, ['exec', '--json', prompt], {
-    cwd: process.cwd(),
+    cwd: config.cwd || process.cwd(),
     env: env as Record<string, string>,
     stdio: ['ignore', 'pipe', 'pipe'],
   });

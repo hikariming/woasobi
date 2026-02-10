@@ -375,6 +375,7 @@ export async function* runClaude(
     model: config.model,
     pathToClaudeCodeExecutable: claudePath,
     maxTurns: 200,
+    cwd: config.cwd,
   };
 
   try {

@@ -41,6 +41,7 @@ export interface AgentConfig {
   apiKey?: string;
   baseUrl?: string;
   model?: string;
+  cwd?: string;
 }
 
 export interface ConversationMessage {
@@ -60,4 +61,5 @@ export interface AgentRequest {
   threadId?: string;
   messageId?: string;
   permissionMode?: string;
+  projectId?: string;
 }

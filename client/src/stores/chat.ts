@@ -316,6 +316,10 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     useUIStore.getState().setPreviewTab("terminal");
 
     try {
+      // Resolve projectId from thread
+      const thread = get().threads.find((t) => t.id === activeThreadId);
+      const projectId = thread?.projectId;
+
       const response = await sendAgentRequest(content, {
         provider,
         modelConfig,
@@ -324,6 +328,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         threadId: activeThreadId,
         messageId,
         permissionMode,
+        projectId,
       });
 
       await parseSSEStream(response, (msg) => {

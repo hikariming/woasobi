@@ -12,6 +12,7 @@ export interface AgentRequestOptions {
   threadId?: string;
   messageId?: string;
   permissionMode?: string;
+  projectId?: string;
 }
 
 export interface SSEMessage {
@@ -55,6 +56,7 @@ export async function sendAgentRequest(
       threadId: options.threadId,
       messageId: options.messageId,
       permissionMode: options.permissionMode,
+      projectId: options.projectId,
     }),
     signal: options.signal,
   });

@@ -4,7 +4,7 @@ import { runClaude, stopClaudeSession, getCachedClaudeCommands, discoverClaudeCo
 import { runCodex, stopCodexSession } from '../agents/codex.js';
 import { createSSEStream, SSE_HEADERS } from '../utils/sse.js';
 import type { AgentRequest, AgentMessage } from '../agents/types.js';
-import { appendMessage, updateThreadAfterMessage, type StoredMessage, type StoredMessagePart } from '../storage/index.js';
+import { appendMessage, updateThreadAfterMessage, loadProjects, type StoredMessage, type StoredMessagePart } from '../storage/index.js';
 
 const agent = new Hono();
 
@@ -226,11 +226,24 @@ agent.post('/', async (c) => {
   const provider = body.provider || 'claude';
   const trimmedPrompt = body.prompt.trim();
   const isSlashCommand = /^\/\S+/.test(trimmedPrompt);
+  // Resolve project path for working directory
+  let cwd: string | undefined;
+  if (body.projectId) {
+    try {
+      const projects = await loadProjects();
+      const project = projects.find((p) => p.id === body.projectId);
+      if (project) cwd = project.path;
+    } catch {
+      // Fall through to default cwd
+    }
+  }
+
   const config = {
     provider,
     apiKey: body.modelConfig?.apiKey,
     baseUrl: body.modelConfig?.baseUrl,
     model: body.modelConfig?.model,
+    cwd,
   } as const;
 
   let generator: AsyncGenerator<AgentMessage>;
