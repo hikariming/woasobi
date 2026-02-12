@@ -11,6 +11,7 @@ interface SettingsStore {
   openaiApiKey: string;
   openaiBaseUrl: string;
   activeCodexModel: string;
+  activeCodexReasoningEffort: 'low' | 'medium' | 'high';
 
   // Actions
   setAnthropicApiKey: (key: string) => void;
@@ -19,12 +20,14 @@ interface SettingsStore {
   setOpenaiApiKey: (key: string) => void;
   setOpenaiBaseUrl: (url: string) => void;
   setActiveCodexModel: (model: string) => void;
+  setActiveCodexReasoningEffort: (effort: 'low' | 'medium' | 'high') => void;
 
   // Helper: get model config for current mode
   getModelConfig: (mode: 'claudeCode' | 'codex' | 'woAgent') => {
     apiKey?: string;
     baseUrl?: string;
     model?: string;
+    reasoningEffort?: 'low' | 'medium' | 'high';
   };
 }
 
@@ -38,6 +41,7 @@ export const useSettingsStore = create<SettingsStore>()(
       openaiApiKey: '',
       openaiBaseUrl: '',
       activeCodexModel: 'gpt-5.3-codex',
+      activeCodexReasoningEffort: 'medium',
 
       setAnthropicApiKey: (key) => set({ anthropicApiKey: key }),
       setAnthropicBaseUrl: (url) => set({ anthropicBaseUrl: url }),
@@ -45,6 +49,7 @@ export const useSettingsStore = create<SettingsStore>()(
       setOpenaiApiKey: (key) => set({ openaiApiKey: key }),
       setOpenaiBaseUrl: (url) => set({ openaiBaseUrl: url }),
       setActiveCodexModel: (model) => set({ activeCodexModel: model }),
+      setActiveCodexReasoningEffort: (effort) => set({ activeCodexReasoningEffort: effort }),
 
       getModelConfig: (mode) => {
         const state = get();
@@ -60,6 +65,7 @@ export const useSettingsStore = create<SettingsStore>()(
             apiKey: state.openaiApiKey || undefined,
             baseUrl: state.openaiBaseUrl || undefined,
             model: state.activeCodexModel || undefined,
+            reasoningEffort: state.activeCodexReasoningEffort,
           };
         }
         return {};

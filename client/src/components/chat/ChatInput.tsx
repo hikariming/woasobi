@@ -4,7 +4,6 @@ import { cn } from '@/lib/utils';
 import { useChatStore } from '@/stores/chat';
 import { useUIStore } from '@/stores/ui';
 import { useSettingsStore } from '@/stores/settings';
-import { getModelsForMode } from '@/config/models';
 import {
   getPermissionModesForMode,
   getPermissionModeLabel,
@@ -16,6 +15,7 @@ export function ChatInput() {
   const [text, setText] = useState('');
   const [showModelDropdown, setShowModelDropdown] = useState(false);
   const [showPermDropdown, setShowPermDropdown] = useState(false);
+  const [showThinkingDropdown, setShowThinkingDropdown] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const isComposingRef = useRef(false);
@@ -33,13 +33,19 @@ export function ChatInput() {
   const {
     activeModelId, setActiveModelId,
     activeMode, setActiveMode,
+    availableModels, loadModelsForMode,
     slashCommands, permissionMode, setPermissionMode,
     loadSlashCommands,
   } = useUIStore();
-  const { setActiveClaudeModel, setActiveCodexModel } = useSettingsStore();
+  const {
+    activeCodexReasoningEffort,
+    setActiveClaudeModel,
+    setActiveCodexModel,
+    setActiveCodexReasoningEffort,
+  } = useSettingsStore();
 
-  const availableModels = getModelsForMode(activeMode);
-  const activeModel = availableModels.find((m) => m.id === activeModelId);
+  const modeModels = availableModels[activeMode];
+  const activeModel = modeModels.find((m) => m.id === activeModelId);
   const permModes = getPermissionModesForMode(activeMode);
   const permLabel = getPermissionModeLabel(permissionMode);
 
@@ -47,7 +53,8 @@ export function ChatInput() {
   useEffect(() => {
     const provider = activeMode === 'codex' ? 'codex' as const : 'claude' as const;
     loadSlashCommands(provider);
-  }, [activeMode, loadSlashCommands]);
+    loadModelsForMode(activeMode);
+  }, [activeMode, loadSlashCommands, loadModelsForMode]);
 
   // Filter commands for slash menu
   const filteredCommands = slashCommands.filter(c =>
@@ -191,6 +198,12 @@ export function ChatInput() {
     }
     setShowModelDropdown(false);
   };
+
+  const codexReasoningOptions: Array<{ value: 'low' | 'medium' | 'high'; label: string }> = [
+    { value: 'low', label: 'Low' },
+    { value: 'medium', label: 'Medium' },
+    { value: 'high', label: 'High' },
+  ];
 
   // File attachment handlers
   const handleFileAttach = async () => {
@@ -351,7 +364,7 @@ export function ChatInput() {
               </button>
               {showModelDropdown && (
                 <div className="absolute bottom-full left-0 mb-1 w-48 rounded-lg border border-border bg-popover shadow-lg py-1 z-50">
-                  {availableModels.map((m) => (
+                  {modeModels.map((m) => (
                     <button
                       key={m.id}
                       onClick={() => handleModelSelect(m.id)}
@@ -364,12 +377,45 @@ export function ChatInput() {
                       <span className="text-[10px] text-muted-foreground">{m.provider}</span>
                     </button>
                   ))}
-                  {availableModels.length === 0 && (
+                  {modeModels.length === 0 && (
                     <div className="px-3 py-1.5 text-xs text-muted-foreground italic">No models available</div>
                   )}
                 </div>
               )}
             </div>
+
+            {/* Codex Thinking Depth */}
+            {activeMode === 'codex' && (
+              <div className="relative">
+                <button
+                  onClick={() => setShowThinkingDropdown(!showThinkingDropdown)}
+                  className="flex items-center gap-1 px-2 py-1 text-[11px] rounded-md bg-muted/50 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                  title="Codex thinking depth"
+                >
+                  <span>Thinking: {activeCodexReasoningEffort}</span>
+                  <ChevronDown size={10} />
+                </button>
+                {showThinkingDropdown && (
+                  <div className="absolute bottom-full left-0 mb-1 w-32 rounded-lg border border-border bg-popover shadow-lg py-1 z-50">
+                    {codexReasoningOptions.map((option) => (
+                      <button
+                        key={option.value}
+                        onClick={() => {
+                          setActiveCodexReasoningEffort(option.value);
+                          setShowThinkingDropdown(false);
+                        }}
+                        className={cn(
+                          'w-full px-3 py-1.5 text-xs text-left hover:bg-muted transition-colors',
+                          option.value === activeCodexReasoningEffort ? 'text-primary' : 'text-foreground'
+                        )}
+                      >
+                        {option.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Permission Mode Badge */}
             <div className="relative">

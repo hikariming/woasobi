@@ -6,6 +6,7 @@ export interface AgentRequestOptions {
     apiKey?: string;
     baseUrl?: string;
     model?: string;
+    reasoningEffort?: 'low' | 'medium' | 'high';
   };
   conversation?: Array<{ role: 'user' | 'assistant'; content: string }>;
   signal?: AbortSignal;
@@ -13,6 +14,12 @@ export interface AgentRequestOptions {
   messageId?: string;
   permissionMode?: string;
   projectId?: string;
+}
+
+export interface ProviderModelOption {
+  id: string;
+  name: string;
+  provider: string;
 }
 
 export interface SSEMessage {
@@ -160,6 +167,28 @@ export async function fetchSlashCommands(
   try {
     const response = await fetch(`${API_BASE_URL}/agent/commands/${provider}`, {
       signal: AbortSignal.timeout(3000),
+    });
+    if (!response.ok) return [];
+    return response.json();
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Fetch available models for a provider from backend.
+ * Falls back to caller defaults on failure.
+ */
+export async function fetchAvailableModels(
+  provider: 'claude' | 'codex',
+  modelConfig?: { apiKey?: string; baseUrl?: string }
+): Promise<ProviderModelOption[]> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/agent/models/${provider}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ modelConfig }),
+      signal: AbortSignal.timeout(5000),
     });
     if (!response.ok) return [];
     return response.json();

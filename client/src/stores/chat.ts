@@ -144,10 +144,14 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     if (initialUIState.activeMode === "claudeCode" && normalizedInput.startsWith("/")) {
       const threadMessages = get().messages[activeThreadId] || [];
       const ui = useUIStore.getState();
+      const claudeModelIds = (ui.availableModels.claudeCode.length > 0
+        ? ui.availableModels.claudeCode
+        : getModelsForMode("claudeCode")
+      ).map((m) => m.id);
       const slash = handleClaudeSlashCommand({
         input: normalizedInput,
         currentModelId: ui.activeModelId,
-        availableModelIds: getModelsForMode("claudeCode").map((m) => m.id),
+        availableModelIds: claudeModelIds,
         currentPermissionMode: ui.permissionMode,
         availablePermissionModes: getPermissionModesForMode("claudeCode").map((m) => m.value),
         threadMessages,
@@ -205,10 +209,14 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       const threadMessages = get().messages[activeThreadId] || [];
       const usage = get().codexUsageByThread[activeThreadId];
       const ui = useUIStore.getState();
+      const codexModelIds = (ui.availableModels.codex.length > 0
+        ? ui.availableModels.codex
+        : getModelsForMode("codex")
+      ).map((m) => m.id);
       const slash = handleCodexSlashCommand({
         input: normalizedInput,
         currentModelId: ui.activeModelId,
-        availableModelIds: getModelsForMode("codex").map((m) => m.id),
+        availableModelIds: codexModelIds,
         currentApprovalMode: ui.permissionMode,
         availableApprovalModes: getPermissionModesForMode("codex").map((m) => m.value),
         usage,

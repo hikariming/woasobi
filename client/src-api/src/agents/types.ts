@@ -41,6 +41,7 @@ export interface AgentConfig {
   apiKey?: string;
   baseUrl?: string;
   model?: string;
+  reasoningEffort?: 'low' | 'medium' | 'high';
   cwd?: string;
 }
 
@@ -56,6 +57,7 @@ export interface AgentRequest {
     apiKey?: string;
     baseUrl?: string;
     model?: string;
+    reasoningEffort?: 'low' | 'medium' | 'high';
   };
   conversation?: ConversationMessage[];
   threadId?: string;

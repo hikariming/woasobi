@@ -1,5 +1,8 @@
 import { Hono } from 'hono';
 import { nanoid } from 'nanoid';
+import { readFile } from 'fs/promises';
+import { homedir } from 'os';
+import { join } from 'path';
 import { runClaude, stopClaudeSession, getCachedClaudeCommands, discoverClaudeCommands } from '../agents/claude.js';
 import { runCodex, stopCodexSession } from '../agents/codex.js';
 import { createSSEStream, SSE_HEADERS } from '../utils/sse.js';
@@ -160,6 +163,44 @@ const CODEX_COMMANDS = [
   { name: 'compact', description: 'Compact conversation context', argumentHint: '' },
 ];
 
+const DEFAULT_CODEX_MODELS = [
+  { id: 'gpt-5.3-codex', name: 'GPT-5.3 Codex', provider: 'OpenAI' },
+  { id: 'gpt-4.1', name: 'GPT-4.1', provider: 'OpenAI' },
+];
+
+async function loadCodexCachedModels() {
+  try {
+    const cachePath = join(homedir(), '.codex', 'models_cache.json');
+    const raw = await readFile(cachePath, 'utf-8');
+    const json = JSON.parse(raw) as {
+      models?: Array<{
+        slug?: string;
+        display_name?: string;
+        visibility?: string;
+      }>;
+    };
+
+    const models = (json.models || [])
+      .filter((m) => m.visibility !== 'hidden')
+      .map((m) => {
+        const id = m.slug || '';
+        const name = m.display_name || id;
+        return { id, name, provider: 'OpenAI' as const };
+      })
+      .filter((m) => m.id.length > 0);
+
+    return models;
+  } catch {
+    return [];
+  }
+}
+
+function normalizeBaseUrl(baseUrl?: string) {
+  const trimmed = (baseUrl || 'https://api.openai.com/v1').trim();
+  if (!trimmed) return 'https://api.openai.com/v1';
+  return trimmed.endsWith('/') ? trimmed.slice(0, -1) : trimmed;
+}
+
 /**
  * Merge discovered commands with the hardcoded fallback list.
  * Discovered commands (primary) take precedence for the set of names,
@@ -207,6 +248,56 @@ agent.get('/commands/:provider', async (c) => {
   return c.json(DEFAULT_CLAUDE_COMMANDS);
 });
 
+// Get available models for a provider (dynamic for Codex/OpenAI)
+agent.post('/models/:provider', async (c) => {
+  const provider = c.req.param('provider');
+  if (provider !== 'codex') {
+    return c.json([]);
+  }
+
+  // First choice: Codex local model cache (works for ChatGPT-account auth too).
+  const cachedModels = await loadCodexCachedModels();
+  if (cachedModels.length > 0) {
+    return c.json(cachedModels);
+  }
+
+  let body: { modelConfig?: { apiKey?: string; baseUrl?: string } } = {};
+  try {
+    body = await c.req.json<{ modelConfig?: { apiKey?: string; baseUrl?: string } }>();
+  } catch {
+    body = {};
+  }
+  const apiKey = body.modelConfig?.apiKey || process.env.OPENAI_API_KEY;
+  const baseUrl = normalizeBaseUrl(body.modelConfig?.baseUrl || process.env.OPENAI_BASE_URL);
+
+  if (!apiKey) {
+    return c.json(DEFAULT_CODEX_MODELS);
+  }
+
+  try {
+    const resp = await fetch(`${baseUrl}/models`, {
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+      },
+    });
+    if (!resp.ok) {
+      return c.json(DEFAULT_CODEX_MODELS);
+    }
+
+    const data = await resp.json() as { data?: Array<{ id?: string; owned_by?: string }> };
+    const models = (data.data || [])
+      .map((m) => m.id)
+      .filter((id): id is string => typeof id === 'string' && id.length > 0)
+      .filter((id) => /^(gpt|o\d|codex)/i.test(id))
+      .sort((a, b) => a.localeCompare(b))
+      .map((id) => ({ id, name: id, provider: 'OpenAI' }));
+
+    return c.json(models.length > 0 ? models : DEFAULT_CODEX_MODELS);
+  } catch {
+    return c.json(DEFAULT_CODEX_MODELS);
+  }
+});
+
 // Direct execution
 agent.post('/', async (c) => {
   const body = await c.req.json<AgentRequest>();
@@ -243,6 +334,7 @@ agent.post('/', async (c) => {
     apiKey: body.modelConfig?.apiKey,
     baseUrl: body.modelConfig?.baseUrl,
     model: body.modelConfig?.model,
+    reasoningEffort: body.modelConfig?.reasoningEffort,
     cwd,
   } as const;
 

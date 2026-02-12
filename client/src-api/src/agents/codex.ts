@@ -96,12 +96,17 @@ export async function* runCodex(
   if (config.baseUrl) {
     env.OPENAI_BASE_URL = config.baseUrl;
   }
+  const args = ['exec', '--json'];
   if (config.model) {
-    env.CODEX_MODEL = config.model;
+    args.push('--model', config.model);
   }
+  if (config.reasoningEffort) {
+    args.push('--config', `reasoning_effort="${config.reasoningEffort}"`);
+  }
+  args.push(prompt);
 
   // Spawn codex process in JSON event mode so we can extract token usage reliably.
-  const proc = spawn(codexPath, ['exec', '--json', prompt], {
+  const proc = spawn(codexPath, args, {
     cwd: config.cwd || process.cwd(),
     env: env as Record<string, string>,
     stdio: ['ignore', 'pipe', 'pipe'],
